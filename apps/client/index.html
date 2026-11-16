@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><title>MMORPG</title>
+<!-- Estilos del HUD en src/ui/hud.css (importado desde main.ts) -->
+</head>
+<body>
+<div id="info">conectando…</div>
+<div id="minimap" class="frame">
+  <div id="mm-title"><span id="mm-city"></span><span id="mm-zone"></span></div>
+  <div id="mm-ring"><canvas id="mm-canvas"></canvas></div>
+  <div id="mm-foot"><span id="mm-coords"></span><span><b>M</b> mapa</span></div>
+</div>
+<div id="bigmap"><div class="frame">
+  <div id="bm-title"></div><canvas id="bm-canvas"></canvas>
+  <div id="bm-hint">Estás aquí: flecha azul · <i>●</i> jugadores · <u>●</u> lobos · M o Esc para cerrar</div>
+</div></div>
+<div id="me">
+  <div id="hotbar" class="frame"><div class="slot"><span>1</span></div><div class="slot"><span>2</span></div><div class="slot"><span>3</span></div><div class="slot"><span>4</span></div><div class="slot"><span>5</span></div></div>
+  <div class="bar"><div class="fill" id="hpfill"></div><div class="txt" id="hptxt"></div></div>
+  <div id="xp"><div id="xpfill"></div></div>
+</div>
+<div id="panel"></div>
+<div id="chat" class="frame"><div id="log"></div><input id="chatin" maxlength="120" placeholder="Enter para chatear"></div>
+<div id="dead">Has muerto… reapareciendo</div>
+<script type="module" src="/src/main.ts"></script></body></html>

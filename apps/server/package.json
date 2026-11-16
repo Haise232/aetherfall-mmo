@@ -1,0 +1,4 @@
+{ "name": "@mmorpg/server", "version": "0.0.0", "type": "module",
+  "scripts": { "dev": "tsx watch src/main.ts" },
+  "dependencies": { "@mmorpg/shared": "*", "ws": "^8.18.0" },
+  "devDependencies": { "tsx": "^4.19.0", "@types/ws": "^8.5.0" } }

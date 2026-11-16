@@ -1,0 +1,122 @@
+/* HUD medieval: madera, hierro y pergamino hechos solo con CSS. */
+:root {
+  --serif: Georgia, "Palatino Linotype", "Book Antiqua", Palatino, serif;
+  --wood-d: #24150a; --wood: #3d2713; --wood-l: #5e3d1f;
+  --iron: #2a2c32; --iron-l: #7b808a;
+  --gold: #d4a640; --gold-l: #f3d98a; --gold-d: #7a5a1c;
+  --parch: #e9dbb4; --parch-d: #c9b283; --ink: #2a1a0c;
+}
+html, body { margin: 0; height: 100%; overflow: hidden; background: #111; font: 14px var(--serif); color: #f4ead0; user-select: none; }
+canvas { display: block; }
+
+.frame {
+  background: linear-gradient(180deg, var(--wood-l), var(--wood) 40%, var(--wood-d));
+  border: 2px solid #0e0804; border-radius: 6px;
+  box-shadow: inset 0 0 0 1px var(--gold-d), inset 0 1px 0 2px rgba(255, 220, 150, .18), 0 4px 14px rgba(0, 0, 0, .65);
+}
+
+/* ---- Info (estado de conexion) ---- */
+#info {
+  position: fixed; top: 8px; left: 8px; padding: 4px 12px; font-size: 12px; letter-spacing: .3px; color: var(--gold-l);
+  background: linear-gradient(180deg, rgba(60, 38, 18, .88), rgba(28, 17, 8, .88));
+  border: 1px solid #0e0804; border-radius: 4px; box-shadow: inset 0 0 0 1px var(--gold-d), 0 2px 8px rgba(0, 0, 0, .6);
+  text-shadow: 0 1px 2px #000;
+}
+
+/* ---- Minimapa ---- */
+#minimap { position: fixed; top: 8px; right: 8px; width: 204px; padding: 6px 8px 5px; box-sizing: border-box; }
+#mm-title { display: flex; flex-direction: column; align-items: center; margin-bottom: 5px; line-height: 1.15; }
+#mm-city { font-size: 16px; font-weight: bold; letter-spacing: 2px; color: var(--gold-l); text-shadow: 0 1px 0 #000, 0 0 6px rgba(212, 166, 64, .4); }
+#mm-zone { font-size: 11px; font-style: italic; padding: 0 8px; border-radius: 8px; margin-top: 1px; text-shadow: 0 1px 1px #000; }
+#mm-zone.safe { color: #a9e9a0; }
+#mm-zone.wild { color: #ff9a8a; }
+#mm-ring {
+  width: 184px; height: 184px; border-radius: 50%; margin: 0 auto; position: relative; cursor: pointer;
+  box-shadow: 0 0 0 2px #0e0804, 0 0 0 4px var(--gold-d), 0 0 0 5px #0e0804, inset 0 0 10px rgba(0, 0, 0, .7);
+}
+#mm-canvas { width: 184px; height: 184px; border-radius: 50%; }
+#mm-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 9px; font-size: 11px; color: var(--parch-d); text-shadow: 0 1px 1px #000; }
+#mm-foot b { color: var(--gold-l); border: 1px solid var(--gold-d); border-radius: 3px; padding: 0 4px; background: #1a0f06; font-size: 10px; }
+#mm-coords { font-variant-numeric: tabular-nums; letter-spacing: .5px; }
+
+/* ---- Mapa completo ---- */
+#bigmap { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(8, 5, 2, .6); z-index: 50; }
+#bigmap .frame { padding: 8px 12px 10px; display: flex; flex-direction: column; align-items: center; }
+#bm-title { font-size: 20px; font-weight: bold; letter-spacing: 4px; color: var(--gold-l); text-shadow: 0 1px 0 #000; margin-bottom: 6px; text-transform: uppercase; }
+#bm-canvas { border: 3px solid #0e0804; outline: 1px solid var(--gold-d); border-radius: 3px; }
+#bm-hint { margin-top: 6px; font-size: 11px; color: var(--parch-d); font-style: italic; }
+#bm-hint i { font-style: normal; color: #f4e7a8; } #bm-hint u { text-decoration: none; color: #e53935; }
+
+/* ---- Barras de vida / XP / hotbar ---- */
+#me { position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%); width: 330px; display: flex; flex-direction: column; align-items: center; gap: 5px; }
+#hotbar { display: flex; gap: 6px; padding: 5px 7px; }
+#hotbar .slot {
+  width: 40px; height: 40px; box-sizing: border-box; position: relative; border-radius: 4px;
+  background: radial-gradient(circle at 50% 35%, #2c2f36, #101114);
+  border: 2px solid var(--iron-l); border-top-color: #aeb3bd; border-bottom-color: #3c3f46;
+  box-shadow: inset 0 0 8px #000, 0 1px 0 #000;
+}
+#hotbar .slot span { position: absolute; left: 3px; top: 0; font-size: 11px; font-weight: bold; color: var(--gold-l); text-shadow: 0 1px 1px #000; }
+#me .bar {
+  position: relative; width: 100%; height: 22px; box-sizing: border-box; overflow: hidden; border-radius: 4px;
+  background: #2a0808; border: 2px solid #0e0804;
+  box-shadow: 0 0 0 1px var(--gold-d), 0 0 0 2px #0e0804, inset 0 2px 5px rgba(0, 0, 0, .8), 0 3px 8px rgba(0, 0, 0, .6);
+}
+#me .fill {
+  height: 100%; width: 100%; transition: width .15s;
+  background: linear-gradient(180deg, #ff6a5a 0%, #d12a22 45%, #8d1612 100%); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35);
+}
+#me .txt {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: bold; letter-spacing: .5px;
+  color: #fff6e0; text-shadow: 0 1px 2px #000, 0 0 3px #000; white-space: nowrap;
+}
+#xp {
+  width: 100%; height: 9px; box-sizing: border-box; border-radius: 3px; overflow: hidden; background: #0f1630; border: 2px solid #0e0804;
+  box-shadow: 0 0 0 1px var(--gold-d), inset 0 1px 3px #000; margin-top: 2px;
+}
+#xpfill { height: 100%; width: 0; transition: width .3s; background: linear-gradient(180deg, #9ec4ff, #3c6fd8 55%, #24449a); }
+
+/* ---- Chat ---- */
+#chat { position: fixed; bottom: 12px; left: 8px; width: 340px; padding: 6px; box-sizing: border-box; }
+#log {
+  height: 120px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; padding: 4px 6px; margin-bottom: 5px; box-sizing: border-box;
+  background: rgba(12, 7, 3, .55); border: 1px solid rgba(0, 0, 0, .7); border-radius: 3px; box-shadow: inset 0 0 6px #000;
+  font-size: 13px; line-height: 1.3; text-shadow: 0 1px 2px #000, 0 0 2px #000;
+}
+#chat input {
+  width: 100%; box-sizing: border-box; background: linear-gradient(180deg, #d9c898, var(--parch)); border: 2px solid #0e0804; border-radius: 3px;
+  color: var(--ink); padding: 4px 7px; font: 13px var(--serif); box-shadow: inset 0 1px 4px rgba(60, 35, 10, .5); outline: none;
+}
+#chat input:focus { box-shadow: inset 0 1px 4px rgba(60, 35, 10, .5), 0 0 0 2px var(--gold); }
+#chat input::placeholder { color: #7d6a47; font-style: italic; }
+
+/* ---- Texto flotante ---- */
+.dmg {
+  position: fixed; pointer-events: none; font: bold 20px var(--serif); letter-spacing: .5px; z-index: 20; transform: translateX(-50%);
+  text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000, 0 2px 4px rgba(0, 0, 0, .8);
+  animation: up 1s ease-out forwards;
+}
+@keyframes up { 0% { transform: translate(-50%, 0) scale(1.35); } 20% { transform: translate(-50%, -8px) scale(1); } to { transform: translate(-50%, -48px); opacity: 0; } }
+
+/* ---- Inventario (pergamino) ---- */
+#panel {
+  position: fixed; top: 270px; right: 8px; width: 264px; box-sizing: border-box; display: none; padding: 12px 14px 10px; color: var(--ink);
+  background: radial-gradient(ellipse at 50% 0, #f2e6c2, var(--parch) 45%, var(--parch-d));
+  border: 3px solid var(--wood); border-radius: 5px;
+  box-shadow: 0 0 0 1px #0e0804, 0 0 0 4px var(--wood-d), 0 0 0 5px var(--gold-d), inset 0 0 22px rgba(110, 70, 20, .45), 0 8px 20px rgba(0, 0, 0, .7);
+}
+#panel h2 { margin: 0 0 6px; text-align: center; font-size: 17px; letter-spacing: 3px; text-transform: uppercase; color: #4a2a0c; border-bottom: 2px double #8a6a34; padding-bottom: 4px; }
+#panel b { color: #4a2a0c; }
+#panel h3 { margin: 10px 0 4px; font-size: 13px; color: #7a2a14; letter-spacing: 1px; text-transform: uppercase; border-bottom: 1px solid rgba(110, 70, 20, .45); }
+#panel .row { display: flex; justify-content: space-between; gap: 8px; padding: 3px 6px; margin: 2px 0; cursor: pointer; border-radius: 3px; border: 1px solid transparent; font-size: 13px; }
+#panel .row:hover { background: rgba(122, 42, 20, .14); border-color: rgba(122, 42, 20, .5); }
+#panel .hint { color: #6b5733; font-size: 11px; margin-top: 8px; font-style: italic; text-align: center; }
+
+/* ---- Muerte ---- */
+#dead {
+  position: fixed; inset: 0; display: none; align-items: center; justify-content: center; pointer-events: none;
+  font: italic bold 34px var(--serif); letter-spacing: 2px; color: #ffd9c9; text-shadow: 0 2px 6px #000, 0 0 18px #a00;
+  background: radial-gradient(ellipse at center, rgba(90, 0, 0, .25), rgba(60, 0, 0, .72));
+}
+
+@media (max-height: 700px) { #log { height: 90px; } }
