@@ -7,8 +7,11 @@ python3 - "$U" <<'PY'
 import re, sys, datetime
 u = sys.argv[1]; p = "README.md"; s = open(p, encoding="utf-8").read()
 hoy = datetime.date.today().strftime("%d/%m/%Y")
-nuevo = f"<!-- DIRECCION -->\n**Dirección:** [{u}]({u})  \n<sub>Actualizada el {hoy}. Mientras la beta no tenga dominio propio, la dirección cambia cuando se reinicia el servidor.</sub>\n<!-- /DIRECCION -->"
-s2 = re.sub(r"<!-- DIRECCION -->.*?<!-- /DIRECCION -->", lambda m: nuevo, s, flags=re.S)
+insignia = f"<!-- DIRECCION -->\n[![Jugar la beta](https://img.shields.io/badge/JUGAR-AHORA-e9b949?style=for-the-badge&logo=cloudflare&logoColor=white)]({u})\n<!-- /DIRECCION -->"
+enlace = (f"<!-- ENLACE -->\n<div align=\"center\">\n\n### 👉 [{u.removeprefix('https://')}]({u})\n\n"
+          f"<sub>Actualizada el {hoy}. Mientras la beta no tenga dominio propio, la dirección cambia cuando se reinicia el servidor.</sub>\n\n</div>\n<!-- /ENLACE -->")
+s2 = re.sub(r"<!-- DIRECCION -->.*?<!-- /DIRECCION -->", lambda m: insignia, s, flags=re.S)
+s2 = re.sub(r"<!-- ENLACE -->.*?<!-- /ENLACE -->", lambda m: enlace, s2, flags=re.S)
 if s2 == s: print("La dirección ya estaba al día."); sys.exit(0)
 open(p, "w", encoding="utf-8").write(s2)
 PY
