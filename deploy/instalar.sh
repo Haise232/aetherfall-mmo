@@ -26,6 +26,24 @@ systemctl daemon-reload
 systemctl enable --now valdoria.service
 for i in $(seq 1 40); do curl -fs http://127.0.0.1:8787/salud >/dev/null && break; sleep 0.5; done
 curl -fs http://127.0.0.1:8787/salud >/dev/null || { echo "El juego no arrancó. Mira: journalctl -u valdoria -n 50"; exit 1; }
+
+echo "» Comprobando el aislamiento (el juego no debe ver tu carpeta personal)…"
+if systemd-run --quiet --wait --pipe --collect -p User="$USR" -p ProtectHome=tmpfs -p BindReadOnlyPaths="$REPO" -p BindPaths="$REPO/apps/server/data" -p ProtectSystem=strict \
+    sh -c "test ! -e \$HOME/.ssh && ! touch '$REPO/.prueba' 2>/dev/null && touch '$REPO/apps/server/data/.prueba' && rm '$REPO/apps/server/data/.prueba'"; then
+  echo "  Aislado: no ve tu carpeta personal, no puede tocar el código y solo escribe en apps/server/data."
+else
+  echo "  AVISO: el aislamiento no se aplica como se esperaba. Revisa antes de abrir la beta."
+fi
+
 systemctl enable --now valdoria-tunnel.service
-echo "» Listo. Esperando la dirección del túnel…"
-"$REPO/deploy/direccion.sh"
+echo "» Esperando la dirección del túnel…"
+URL=$("$REPO/deploy/direccion.sh" | grep -o 'https://[a-z0-9-]*\.trycloudflare\.com') || { echo "El túnel no dio dirección. Mira: journalctl -u valdoria-tunnel -n 30"; exit 1; }
+echo "» Comprobando que la web responde desde Internet…"
+for i in $(seq 1 30); do curl -fs "$URL/salud" >/dev/null && break; sleep 2; done
+curl -fs "$URL/salud" >/dev/null && echo "  Responde: $URL" || echo "  Aún no responde (a veces tarda un minuto en propagarse)."
+echo "» Publicando la dirección en el README de GitHub…"
+sudo -u "$USR" -H bash -lc "cd '$REPO' && deploy/publicar-direccion.sh" || echo "  No se pudo subir a GitHub; ejecuta luego: deploy/publicar-direccion.sh"
+echo
+echo "════════════════════════════════════════════"
+echo "  Valdoria está en marcha: $URL"
+echo "════════════════════════════════════════════"
