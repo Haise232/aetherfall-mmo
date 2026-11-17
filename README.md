@@ -9,7 +9,8 @@
 ## Jugar
 
 <!-- DIRECCION -->
-**Dirección:** se publica aquí en cuanto el servidor esté en marcha.
+**Dirección:** [https://homeless-ban-applying-night.trycloudflare.com](https://homeless-ban-applying-night.trycloudflare.com)  
+<sub>Actualizada el 17/11/2026. Mientras la beta no tenga dominio propio, la dirección cambia cuando se reinicia el servidor.</sub>
 <!-- /DIRECCION -->
 
 Funciona en cualquier navegador moderno de escritorio con WebGL (Chrome, Firefox, Edge, Safari). Para entrar:
