@@ -12,7 +12,7 @@ Sin instalar nada: entras desde la web y juegas con tus amigos en el mismo mundo
 <br />
 
 <!-- DIRECCION -->
-[![Jugar la beta](https://img.shields.io/badge/JUGAR-AHORA-e9b949?style=for-the-badge&logo=cloudflare&logoColor=white)](https://homeless-ban-applying-night.trycloudflare.com)
+[![Jugar la beta](https://img.shields.io/badge/JUGAR-AHORA-e9b949?style=for-the-badge&logo=cloudflare&logoColor=white)](https://multi-jade-volleyball-mechanisms.trycloudflare.com)
 <!-- /DIRECCION -->
 ![Estado](https://img.shields.io/badge/ESTADO-BETA_POR_INVITACI%C3%93N-9b2f3d?style=for-the-badge)
 ![Versión](https://img.shields.io/badge/VERSI%C3%93N-0.1.0-blue?style=for-the-badge)
@@ -106,7 +106,7 @@ Sin instalar nada: entras desde la web y juegas con tus amigos en el mismo mundo
 <!-- ENLACE -->
 <div align="center">
 
-### 👉 [homeless-ban-applying-night.trycloudflare.com](https://homeless-ban-applying-night.trycloudflare.com)
+### 👉 [multi-jade-volleyball-mechanisms.trycloudflare.com](https://multi-jade-volleyball-mechanisms.trycloudflare.com)
 
 <sub>Actualizada el 17/11/2026. Mientras la beta no tenga dominio propio, la dirección cambia cuando se reinicia el servidor.</sub>
 
@@ -162,7 +162,7 @@ Funciona en navegadores de escritorio con WebGL (Chrome, Firefox, Edge y Safari)
 | ✨ | **Bendición de la diosa** | <kbd>F</kbd> | Rezar 21 s transforma al Caballero en **Paladín** y al Mago en **Mago de la Luz** |
 | 🌟 | **Árbol de habilidades** | <kbd>K</kbd> | Tres casillas con tres opciones (se desbloquean a nivel 3 y 8), definitiva a nivel 6 y rangos hasta 5 |
 | 🎖️ | **Rangos de clase** | <kbd>K</kbd> | Títulos por nivel (del Caballero: de Escudero a Leyenda del reino) que dan +5 % de vida y daño cada uno |
-| 🐎 | **Monturas** | <kbd>R</kbd> | Caballo, corcel sagrado, cabra montesa, pantera sombría y escoba voladora |
+| 🐎 | **Monturas** | <kbd>R</kbd> | Caballo, corcel sagrado, cabra montesa, pantera sombría, escoba voladora y el dragón (se elige en el inventario) |
 
 ### ⛏️ Oficios y economía
 
@@ -178,6 +178,7 @@ Funciona en navegadores de escritorio con WebGL (Chrome, Firefox, Edge y Safari)
 | | Función | Descripción |
 |---|---------|-------------|
 | 🐺 | **Lobos** | Fuera de la muralla, con persecución, botín y reaparición |
+| 🐉 | **Jefe dragón** | Vermithrax despierta con un evento del panel: vuela sobre su guarida, muerde y escupe fuego. Quien ayuda a derrotarlo lo gana como **montura voladora** |
 | 📜 | **Misiones** | Encadenadas, con NPCs que tienen diálogo, marcador `!` y flecha guía |
 | 💬 | **Chat y gestos** | Los mensajes aparecen en un bocadillo sobre tu personaje |
 
@@ -188,7 +189,7 @@ Funciona en navegadores de escritorio con WebGL (Chrome, Firefox, Edge y Safari)
 | 🛂 | **Solicitudes** | Aceptar o rechazar cuentas; al aceptar se genera una contraseña temporal |
 | 👥 | **Cuentas** | Contraseña temporal nueva, bloquear y desbloquear |
 | 🚪 | **Conectados** | Ver quién juega y expulsar |
-| 🎉 | **Eventos del mundo** | Doble experiencia, doble recolección y luna de lobos, de 15 a 60 minutos |
+| 🎉 | **Eventos del mundo** | Doble experiencia, doble recolección, luna de lobos y ataque del dragón, de 15 a 60 minutos |
 | 📢 | **Avisos** | Cartel grande en pantalla para todos los conectados |
 
 ---
@@ -385,6 +386,7 @@ sudo deploy/desinstalar.sh   # quita los servicios (la base de datos se queda)
 ## 🙏 Créditos
 
 - Modelos de personaje: [KayKit: Adventurers Character Pack](https://github.com/KayKit-Game-Assets/KayKit-Character-Pack-Adventures-1.0) de Kay Lousberg (CC0).
+- Dragón: [Dragon Rigged](https://poly.pizza/m/WIOTISRjeX) de **na3ee1** ([CC-BY 3.0](https://creativecommons.org/licenses/by/3.0/)), vía Poly Pizza. Animado por código.
 - Tipografías: Grenze Gotisch y Alegreya Sans (SIL Open Font License).
 - La ciudad, el castillo, los efectos, la interfaz y el sonido ambiente se generan por código.
 
