@@ -11,6 +11,7 @@ export interface MapView {
   group: { position: { x: number; z: number } };
   state: { kind: string; dead: boolean; name: string };
   heading: number; // rad, 0 = +Z
+  alt?: number; // altura de vuelo
 }
 
 const S = 3; // px por unidad de mundo en el fondo prerenderizado
@@ -18,7 +19,7 @@ const PAD = 10;
 const OFF_SIZE = (2 * WORLD_HALF + 2 * PAD) * S;
 const SQ = Math.SQRT1_2;
 const css = (n: number) => "#" + n.toString(16).padStart(6, "0");
-const SERIF = 'Georgia, "Palatino Linotype", "Book Antiqua", serif';
+const SERIF = '"Alegreya Sans", "Segoe UI", Verdana, sans-serif';
 
 function prerender(): HTMLCanvasElement {
   const c = document.createElement("canvas");
@@ -126,7 +127,7 @@ const BIG_LABELS: Label[] = [
 
 function drawLabel(g: CanvasRenderingContext2D, text: string, x: number, y: number, size: number, color = "#fff6dc") {
   g.font = `bold ${size}px ${SERIF}`; g.textAlign = "center"; g.textBaseline = "middle";
-  g.lineJoin = "round"; g.lineWidth = Math.max(3, size / 3); g.strokeStyle = "rgba(20,10,0,.92)"; g.strokeText(text, x, y);
+  g.lineJoin = "round"; g.lineWidth = Math.max(3, size / 3); g.strokeStyle = "rgba(17,26,41,.94)"; g.strokeText(text, x, y);
   g.fillStyle = color; g.fillText(text, x, y);
 }
 function arrow(g: CanvasRenderingContext2D, x: number, y: number, ang: number, k: number) {
@@ -136,7 +137,20 @@ function arrow(g: CanvasRenderingContext2D, x: number, y: number, ang: number, k
   g.restore();
 }
 
+/** Rombo dorado: destino de la misión. */
+function goalMark(g: CanvasRenderingContext2D, x: number, y: number, k: number) {
+  g.save(); g.translate(x, y); g.rotate(Math.PI / 4);
+  g.fillStyle = "#e2b23f"; g.strokeStyle = "#111a29"; g.lineWidth = 2 * k; g.fillRect(-5 * k, -5 * k, 10 * k, 10 * k); g.strokeRect(-5 * k, -5 * k, 10 * k, 10 * k);
+  g.restore();
+}
+
 export function createMinimap() {
+  let goal: { x: number; z: number } | null = null;
+  let nodes: { x: number; z: number }[] = []; // recursos de tu oficio
+  const nodeMark = (c: CanvasRenderingContext2D, x: number, y: number, s: number) => {
+    c.beginPath(); c.moveTo(x, y - s); c.lineTo(x + s, y); c.lineTo(x, y + s); c.lineTo(x - s, y); c.closePath();
+    c.fillStyle = "#6fd08a"; c.fill(); c.lineWidth = 1; c.strokeStyle = "rgba(0,0,0,.8)"; c.stroke();
+  };
   const el = (id: string) => document.getElementById(id)!;
   const mmCanvas = el("mm-canvas") as HTMLCanvasElement, bmCanvas = el("bm-canvas") as HTMLCanvasElement;
   const zoneEl = el("mm-zone"), coordEl = el("mm-coords"), bigEl = el("bigmap"), cityEl = el("mm-city");
@@ -170,7 +184,7 @@ export function createMinimap() {
     g.clearRect(0, 0, SIZE, SIZE);
     g.save();
     g.beginPath(); g.arc(R, R, R - 1, 0, 7); g.clip();
-    g.fillStyle = "#1c2417"; g.fillRect(0, 0, SIZE, SIZE);
+    g.fillStyle = "#1d2a3f"; g.fillRect(0, 0, SIZE, SIZE);
     g.translate(R, R); g.rotate(Math.PI / 4); g.scale(z, z); g.translate(-mx, -mz);
     g.imageSmoothingEnabled = true;
     g.drawImage(off, -(WORLD_HALF + PAD), -(WORLD_HALF + PAD), 2 * (WORLD_HALF + PAD), 2 * (WORLD_HALF + PAD));
@@ -191,12 +205,18 @@ export function createMinimap() {
       g.beginPath(); g.arc(x, y, wolf ? 3 : 3.4, 0, 7);
       g.fillStyle = wolf ? "#e53935" : "#f4e7a8"; g.fill(); g.lineWidth = 1.2; g.strokeStyle = "rgba(0,0,0,.85)"; g.stroke();
     }
+    for (const n of nodes) { const x = sx(n.x, n.z), y = sy(n.x, n.z); if (Math.hypot(x - R, y - R) < R - 6) nodeMark(g, x, y, 3.2); }
+    if (goal) { // fuera del disco se queda pegado al borde, en su dirección
+      let x = sx(goal.x, goal.z), y = sy(goal.x, goal.z); const dd = Math.hypot(x - R, y - R), lim = R - 10;
+      if (dd > lim) { x = R + ((x - R) / dd) * lim; y = R + ((y - R) / dd) * lim; }
+      goalMark(g, x, y, 1);
+    }
     arrow(g, R, R, Math.atan2((Math.sin(heading) + Math.cos(heading)) * SQ, (Math.sin(heading) - Math.cos(heading)) * SQ), 1);
     g.restore();
     // N hacia el norte del mundo (-z): arriba a la derecha
     const nx = R + (R - 11) * SQ, ny = R - (R - 11) * SQ;
-    g.beginPath(); g.arc(nx, ny, 8, 0, 7); g.fillStyle = "#2b1a0c"; g.fill(); g.lineWidth = 1.5; g.strokeStyle = "#d4a640"; g.stroke();
-    drawLabel(g, "N", nx, ny + 0.5, 10, "#ffe9a0");
+    g.beginPath(); g.arc(nx, ny, 8, 0, 7); g.fillStyle = "#e2b23f"; g.fill(); g.lineWidth = 2; g.strokeStyle = "#1d2a3f"; g.stroke();
+    g.font = `800 11px ${SERIF}`; g.textAlign = "center"; g.textBaseline = "middle"; g.fillStyle = "#1d2a3f"; g.fillText("N", nx, ny + 0.5);
   }
 
   function drawBig(mx: number, mz: number, heading: number, views: Iterable<MapView>, meView: MapView | undefined) {
@@ -212,14 +232,20 @@ export function createMinimap() {
       gb.beginPath(); gb.arc(px(v.group.position.x), pz(v.group.position.z), (wolf ? 3.2 : 4) * d, 0, 7);
       gb.fillStyle = wolf ? "#e53935" : "#f4e7a8"; gb.fill(); gb.lineWidth = 1.3 * d; gb.strokeStyle = "rgba(0,0,0,.85)"; gb.stroke();
     }
+    for (const n of nodes) nodeMark(gb, px(n.x), pz(n.z), 4 * d);
+    if (goal) goalMark(gb, px(goal.x), pz(goal.z), 1.4 * d);
     arrow(gb, px(mx), pz(mz), Math.atan2(Math.cos(heading), Math.sin(heading)), 1.5 * d);
     // Brújula
     const cx = W - 30 * d, cy = 34 * d;
-    gb.beginPath(); gb.arc(cx, cy, 16 * d, 0, 7); gb.fillStyle = "rgba(30,18,8,.85)"; gb.fill(); gb.lineWidth = 2 * d; gb.strokeStyle = "#d4a640"; gb.stroke();
-    drawLabel(gb, "N", cx, cy, 15 * d, "#ffe9a0");
+    gb.beginPath(); gb.arc(cx, cy, 16 * d, 0, 7); gb.fillStyle = "#e2b23f"; gb.fill(); gb.lineWidth = 2 * d; gb.strokeStyle = "#1d2a3f"; gb.stroke();
+    gb.font = `800 ${17 * d}px ${SERIF}`; gb.textAlign = "center"; gb.textBaseline = "middle"; gb.fillStyle = "#1d2a3f"; gb.fillText("N", cx, cy + d);
   }
 
   return {
+    /** Destino de la misión en curso (null: ninguno). */
+    setGoal(p: { x: number; z: number } | null) { goal = p; },
+    /** Recursos de tu oficio que están disponibles (rombos verdes). */
+    setNodes(list: { x: number; z: number }[]) { nodes = list; },
     update(me: MapView | undefined, views: Iterable<MapView>) {
       if (!me) return;
       const mx = me.group.position.x, mz = me.group.position.z;
@@ -228,7 +254,7 @@ export function createMinimap() {
         lastSafe = safe; zoneEl.textContent = safe ? "Zona segura" : "Zona salvaje";
         zoneEl.className = safe ? "safe" : "wild";
       }
-      const c = `X ${Math.round(mx)}   Z ${Math.round(mz)}`;
+      const c = `${Math.round(mx)}, ${Math.round(mz)}` + ((me.alt ?? 0) > 1 ? `   altura ${Math.round(me.alt!)} m` : "");
       if (c !== lastCoord) { lastCoord = c; coordEl.textContent = c; }
       drawMini(mx, mz, me.heading, views, me);
       if (bigOpen) drawBig(mx, mz, me.heading, views, me);

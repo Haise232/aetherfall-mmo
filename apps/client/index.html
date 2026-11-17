@@ -1,24 +1,31 @@
 <!doctype html>
-<html lang="es"><head><meta charset="utf-8"><title>MMORPG</title>
-<!-- Estilos del HUD en src/ui/hud.css (importado desde main.ts) -->
+<html lang="es"><head>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Valdoria</title>
+<!-- Estilos de la interfaz en src/ui/hud.css (importado desde main.ts) -->
 </head>
 <body>
-<div id="info">conectando…</div>
-<div id="minimap" class="frame">
-  <div id="mm-title"><span id="mm-city"></span><span id="mm-zone"></span></div>
-  <div id="mm-ring"><canvas id="mm-canvas"></canvas></div>
-  <div id="mm-foot"><span id="mm-coords"></span><span><b>M</b> mapa</span></div>
+<div id="info" role="status">Conectando…</div>
+<div id="minimap">
+  <div id="mm-ring" title="Clic para cambiar el zoom"><canvas id="mm-canvas"></canvas></div>
+  <div id="mm-tag"><span id="mm-city"></span><span id="mm-zone"></span></div>
+  <div id="mm-foot"><span id="mm-time" title="Hora del día"></span><span id="mm-coords"></span><span><kbd>M</kbd> mapa</span></div>
 </div>
-<div id="bigmap"><div class="frame">
+<div id="bigmap"><div class="sheet">
   <div id="bm-title"></div><canvas id="bm-canvas"></canvas>
-  <div id="bm-hint">Estás aquí: flecha azul · <i>●</i> jugadores · <u>●</u> lobos · M o Esc para cerrar</div>
+  <div id="bm-hint">Tú eres la flecha azul. <i></i> Jugadores <u></u> Lobos <span>Pulsa <kbd>M</kbd> o <kbd>Esc</kbd> para cerrar</span></div>
 </div></div>
 <div id="me">
-  <div id="hotbar" class="frame"><div class="slot"><span>1</span></div><div class="slot"><span>2</span></div><div class="slot"><span>3</span></div><div class="slot"><span>4</span></div><div class="slot"><span>5</span></div></div>
-  <div class="bar"><div class="fill" id="hpfill"></div><div class="txt" id="hptxt"></div></div>
-  <div id="xp"><div id="xpfill"></div></div>
+  <div id="hotbar"></div>
+  <div id="plate">
+    <div id="lvl" title="Nivel">1</div>
+    <div id="vitals">
+      <div id="who"><span id="pname"></span><span id="hptxt"></span></div>
+      <div class="bar" title="Vida"><div class="fill" id="hpfill"></div></div>
+      <div id="xp" title="Experiencia"><div id="xpfill"></div></div>
+    </div>
+  </div>
 </div>
 <div id="panel"></div>
-<div id="chat" class="frame"><div id="log"></div><input id="chatin" maxlength="120" placeholder="Enter para chatear"></div>
-<div id="dead">Has muerto… reapareciendo</div>
+<div id="chat"><div id="log" aria-live="polite"></div><input id="chatin" maxlength="120" placeholder="Pulsa Enter para escribir" aria-label="Mensaje de chat"></div>
+<div id="dead">Has caído<small>Volverás a la plaza enseguida</small></div>
 <script type="module" src="/src/main.ts"></script></body></html>

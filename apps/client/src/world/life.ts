@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { CITY_R, GATE_ANGLES, GREAT_HALL, STALLS, resolveCollisions } from "@mmorpg/shared";
+import { CITY_R, GATE_ANGLES, GREAT_HALL, STALLS, STALL_KINDS, resolveCollisions } from "@mmorpg/shared";
 import { Character, type Kind, type Look } from "../models/character";
 
 // Vida ambiental de la ciudad (solo visual, se simula en cada cliente): vecinos que pasean por las avenidas,
@@ -24,7 +24,7 @@ const chain = (from: number, pts: [number, number][]) => { let p = from; for (co
 chain(0, [[45, 0], [85, 0], [CITY_R - 8, 0]]);
 chain(4, [[-45, 0], [-85, 0], [-CITY_R + 8, 0]]);
 chain(2, [[0, 45], [0, 85], [0, CITY_R - 8]]);
-chain(6, [[0, -30], [0, -47], [0, -57]]);
+  chain(6, [[0, -30], [0, -48]]); // la avenida norte termina ante el patio del castillo; los paseantes no entran al patio
 
 function route(from: number, to: number): number[] {
   const prev = new Map<number, number>([[from, -1]]), q = [from];
@@ -43,9 +43,6 @@ interface Npc {
   role: Role; x: number; z: number; heading: number; speed: number;
   at: number; path: number[]; lane: number; wait: number; body: Character; wasNear: boolean;
 }
-
-const CRIES = ["¡Manzanas frescas!", "¡Pan recién hecho!", "¡Telas de oriente!", "¡Pociones, pociones!", "¡Hierro del bueno!", "¡Quesos curados!",
-  "¡Pescado del lago!", "¡Especias y sal!", "¡Flechas y arcos!", "¡Miel de la sierra!", "¡Velas y aceite!", "¡Pieles de lobo!"];
 
 function crySprite(text: string) {
   const c = document.createElement("canvas"); c.width = 384; c.height = 80;
@@ -86,18 +83,21 @@ export function buildLife(scene: THREE.Scene): Life {
     npcs.push(n); return n;
   };
   for (let i = 0; i < WALKERS; i++) { const at = Math.floor(r() * NODES.length), [x, z] = NODES[at]!; const n = mk("walker", x + (r() - 0.5) * 5, z + (r() - 0.5) * 5, r() * 6.28, townsfolk()); n.at = at; }
-  // mercaderes detrás de cada puesto, mirando a la plaza
+  // un mercader tras cada mostrador, mirando a la calle
   const vendorKinds: Kind[] = ["Barbarian", "Rogue", "Mage", "Rogue_Hooded"];
   const vendors = STALLS.map((s, i) => {
-    const d = Math.hypot(s.x, s.z), ux = s.x / d, uz = s.z / d, kind = vendorKinds[i % vendorKinds.length]!;
-    return mk("vendor", s.x + ux * 1.9, s.z + uz * 1.9, Math.atan2(-ux, -uz), { kind, show: kind === "Barbarian" ? ["Barbarian_Hat"] : kind === "Mage" ? ["Mage_Hat"] : [], tint: TINTS[(i * 3) % TINTS.length] });
+    const kind = vendorKinds[i % vendorKinds.length]!;
+    return mk("vendor", s.vx, s.vz, Math.atan2(s.nx, s.nz), { kind, show: kind === "Barbarian" ? ["Barbarian_Hat"] : kind === "Mage" ? ["Mage_Hat"] : [], tint: TINTS[(i * 3) % TINTS.length] });
   });
   // guardias: puertas de la ciudad, puerta del castillo y gran salón
   const guard: Look = { kind: "Knight", show: ["Knight_Helmet", "Knight_Cape", "1H_Sword", "Rectangle_Shield"] };
   for (const a of GATE_ANGLES) for (const s of [-1, 1]) mk("guard", Math.cos(a) * (CITY_R - 7) - Math.sin(a) * s * 4.2, Math.sin(a) * (CITY_R - 7) + Math.cos(a) * s * 4.2, Math.atan2(-Math.cos(a), -Math.sin(a)), guard);
-  for (const s of [-1, 1]) { mk("guard", s * 4.2, -40.5, 0, guard); mk("guard", s * 4.6, GREAT_HALL.z + GREAT_HALL.d / 2 + 3.2, 0, guard); }
+  for (const s of [-1, 1]) {
+    mk("guard", s * 4.2, -40.5, 0, guard); // a ambos lados de la puerta sur del castillo
+    mk("guard", s * 5.5, -70.5, 0, guard); // a ambos lados de la auténtica puerta, frente al gran salón
+  }
 
-  const cries = vendors.map((v, i) => { const s = crySprite(CRIES[i % CRIES.length]!); s.position.set(v.x, 3.1, v.z); scene.add(s); return { s, npc: v, next: 3 + r() * 14, until: 0 }; });
+  const cries = vendors.map((v, i) => { const st = STALLS[i]!, s = crySprite(STALL_KINDS[st.kind]!.cry); s.position.set(st.x, 3.75, st.z); scene.add(s); return { s, npc: v, next: 3 + r() * 14, until: 0 }; });
 
   // ---- Aves (instanciadas) ----
   const birdMat = new THREE.MeshStandardMaterial({ flatShading: true, roughness: 0.9, side: THREE.DoubleSide });
@@ -142,10 +142,9 @@ export function buildLife(scene: THREE.Scene): Life {
       }
 
       // pregones de los mercaderes cuando el jugador anda cerca
-      const nearPlaza = Math.hypot(focus.x, focus.z) < 40;
       for (const c of cries) {
         if (c.s.visible && t > c.until) c.s.visible = false;
-        if (!c.s.visible && t > c.next) { c.next = t + 9 + r() * 16; if (nearPlaza) { c.s.visible = true; c.until = t + 3.2; c.npc.body.emote("Cheer"); } }
+        if (!c.s.visible && t > c.next) { c.next = t + 9 + r() * 16; if (Math.hypot(c.npc.x - focus.x, c.npc.z - focus.z) < 24) { c.s.visible = true; c.until = t + 3.2; c.npc.body.emote("Cheer"); } }
       }
 
       // aves

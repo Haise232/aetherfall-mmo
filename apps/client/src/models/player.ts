@@ -171,6 +171,8 @@ export class Player {
   private atk = -1; // progreso 0..1 del ataque, -1 = sin ataque
   private fall = 0;
   private dead = false;
+  private praying = false;
+  private prayT = 0;
   private weapon?: string;
   private armor?: string;
 
@@ -378,6 +380,7 @@ export class Player {
   }
 
   attack() { this.atk = 0; }
+  pray() { if (this.dead || this.riding) return; this.praying = true; this.prayT = 0; }
   private riding = false;
   /** Postura de montar en escoba. */
   setRiding(on: boolean) { this.riding = on; }
@@ -389,6 +392,16 @@ export class Player {
   update(dt: number, speed: number) {
     this.t += dt;
     const t = this.t;
+    // Rezar: entra, mantiene y sale de una pose de oración.
+    let prayK = 0;
+    if (this.praying) {
+      this.prayT += dt;
+      if (this.prayT < 0.4) prayK = this.prayT / 0.4;
+      else if (this.prayT < 2.2) prayK = 1;
+      else if (this.prayT < 2.6) prayK = 1 - (this.prayT - 2.2) / 0.4;
+      else this.praying = false;
+      prayK = sstep(prayK);
+    }
     const target = this.dead ? 0 : Math.min(speed / 3, 1);
     // Acelerar y detenerse tienen inercias distintas: no hay cambios binarios de pose.
     const blend = 1 - Math.exp(-dt * (target > this.move01 ? 12 : 8));
@@ -492,6 +505,27 @@ export class Player {
     this.root.position.x = c * 0.012 * m;
     this.root.position.z = wB * 0.16 - wA * 0.04;
     this.root.rotation.x = -this.fall * 1.5;
+    if (prayK > 0 && !this.dead) {
+      // Pose de oración: arrodillado sobre una rodilla, manos juntas, cabeza inclinada.
+      const k = prayK;
+      this.pelvis.position.y = THREE.MathUtils.lerp(0.92, 0.52, k);
+      this.pelvis.rotation.x = k * 0.25;
+      this.legL.rotation.set(THREE.MathUtils.lerp(this.legL.rotation.x, -1.05, k), 0, THREE.MathUtils.lerp(this.legL.rotation.z, 0.35, k));
+      this.kneeL.rotation.x = THREE.MathUtils.lerp(this.kneeL.rotation.x, 1.95, k);
+      this.footL.rotation.x = THREE.MathUtils.lerp(this.footL.rotation.x, -0.35, k);
+      this.legR.rotation.set(THREE.MathUtils.lerp(this.legR.rotation.x, 0.55, k), 0, THREE.MathUtils.lerp(this.legR.rotation.z, -0.25, k));
+      this.kneeR.rotation.x = THREE.MathUtils.lerp(this.kneeR.rotation.x, 1.35, k);
+      this.footR.rotation.x = THREE.MathUtils.lerp(this.footR.rotation.x, -0.55, k);
+      this.torso.rotation.x = THREE.MathUtils.lerp(this.torso.rotation.x, 0.18, k);
+      this.armL.rotation.set(THREE.MathUtils.lerp(this.armL.rotation.x, -0.85, k), 0, THREE.MathUtils.lerp(this.armL.rotation.z, -0.35, k));
+      this.elbowL.rotation.x = THREE.MathUtils.lerp(this.elbowL.rotation.x, -1.6, k);
+      this.armR.rotation.set(THREE.MathUtils.lerp(this.armR.rotation.x, -0.85, k), 0, THREE.MathUtils.lerp(this.armR.rotation.z, 0.35, k));
+      this.elbowR.rotation.x = THREE.MathUtils.lerp(this.elbowR.rotation.x, -1.6, k);
+      this.head.rotation.x = THREE.MathUtils.lerp(this.head.rotation.x, 0.45, k);
+      this.wristL.rotation.z = THREE.MathUtils.lerp(this.wristL.rotation.z, -0.25, k);
+      this.wristR.rotation.z = THREE.MathUtils.lerp(this.wristR.rotation.z, 0.25, k);
+      this.root.position.y = THREE.MathUtils.lerp(this.root.position.y, -0.15, k);
+    }
     if (this.riding && !this.dead) { // sentado en la escoba: piernas recogidas, manos al mango, cuerpo inclinado
       this.legL.rotation.set(-1.25, 0, 0.24); this.legR.rotation.set(-1.25, 0, -0.24);
       this.kneeL.rotation.x = 1.5; this.kneeR.rotation.x = 1.5;

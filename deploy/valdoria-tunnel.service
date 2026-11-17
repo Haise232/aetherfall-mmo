@@ -1,0 +1,26 @@
+# Túnel rápido de Cloudflare hacia el juego: da una dirección https://….trycloudflare.com (cambia en cada arranque).
+# Para ver la dirección actual: deploy/direccion.sh
+[Unit]
+Description=Valdoria: túnel de Cloudflare
+After=valdoria.service network-online.target
+Wants=network-online.target
+Requires=valdoria.service
+
+[Service]
+Type=simple
+DynamicUser=yes
+StateDirectory=valdoria-tunnel
+Environment=HOME=/var/lib/valdoria-tunnel
+ExecStart=/usr/local/bin/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8787
+Restart=always
+RestartSec=5
+ProtectHome=yes
+ProtectSystem=strict
+PrivateTmp=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+
+[Install]
+WantedBy=multi-user.target

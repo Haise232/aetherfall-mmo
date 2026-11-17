@@ -2,13 +2,15 @@ import * as THREE from "three";
 import { buildFountain } from "./fountain";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import {
-  AVENUE_W, BUILDINGS, CARTS, CASTLE_RECT, CITY_NAME, CITY_R, EXTRA_BUILDINGS, FIELDS, FOUNTAIN, GARDENS, GATE_ANGLES, GATE_HALF_WIDTH,
-  GATE_NAMES, GATE_TOWERS, LAKE, LAMPS, PLAZA_R, ROAD_W, ROCKS, STALLS, TREES, WALL_SEGMENTS, WALL_TOWERS, WINDMILLS, WORLD_HALF,
+  AVENUE_W, BUILDINGS, DISTRICTS, districtAt, interiorFrame, interiorH, isEnterable, CARTS, CASTLE_RECT, CITY_NAME, CITY_R, EXTRA_BUILDINGS, FIELDS, FOUNTAIN, GARDENS, GATE_ANGLES, GATE_HALF_WIDTH,
+  GATE_NAMES, GATE_TOWERS, GREAT_HALL, GODDESS_STATUE, LAKE, LAMPS, PLAZA_R, ROAD_W, ROCKS, STALLS, STALL_KINDS, TREES, WALL_SEGMENTS, WALL_TOWERS, WINDMILLS, WORLD_HALF,
 } from "@mmorpg/shared";
-import { RY, cathedral, gatehouse, house, onFace, tower, type Ctx } from "./buildings";
-import { castle } from "./castle";
+import { RY, cathedral, gatehouse, guildBanners, house, onFace, tower, type Ctx } from "./buildings";
+import { castle, goddessFountain } from "./castle";
+import type { SkyLights } from "./sky";
+import { stall } from "./stalls";
 import {
-  DOOR, Merge, STONE, STONE_D, STONE_L, TIMBER, WARM, WOOD, archGeo, bannerGeo, hash2, noiseTexture, rng, std, textSprite,
+  DOOR, Merge, STONE, STONE_D, STONE_L, TIMBER, WARM, WOOD, archGeo, bannerGeo, hash2, pennantGeo, noiseTexture, rng, setWindowGlow, std, textSprite,
 } from "./kit";
 
 /** Geometría con color por vértice, desde una lista de piezas (para instanciar). */
@@ -32,7 +34,10 @@ const vcMat = (extra: THREE.MeshStandardMaterialParameters = {}) => new THREE.Me
 // ---------- mapa ----------
 export interface Lobby {
   ground: THREE.Mesh;
-  update(dt: number, t: number, focus: THREE.Vector3): void;
+  /** Luces que mueve el ciclo de día y noche. */
+  lights: SkyLights;
+  /** `lightDir`: dirección hacia el sol (o la luna) que da las sombras. */
+  update(dt: number, t: number, focus: THREE.Vector3, lightDir?: THREE.Vector3): void;
 }
 
 export function buildLobby(scene: THREE.Scene): Lobby {
@@ -42,18 +47,17 @@ export function buildLobby(scene: THREE.Scene): Lobby {
   const dummy = new THREE.Object3D();
   const ctx: Ctx = { chimneys: [] };
 
-  // --- Cielo y luz (atardecer) ---
-  scene.background = new THREE.Color(0x16241a);
-  scene.add(new THREE.HemisphereLight(0xcfe3ff, 0x5a6a44, 1.25));
+  // --- Luz (el cielo y el ciclo de día y noche están en sky.ts) ---
+  const hemi = new THREE.HemisphereLight(0xcfe3ff, 0x5a6a44, 1.25); scene.add(hemi);
   const sun = new THREE.DirectionalLight(0xfff0d2, 2.7);
   sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048);
-  const sc = sun.shadow.camera; sc.left = -38; sc.right = 38; sc.top = 38; sc.bottom = -38; sc.near = 1; sc.far = 240;
-  sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.05;
+  const sc = sun.shadow.camera; const SH = 44; sc.left = -SH; sc.right = SH; sc.top = SH; sc.bottom = -SH; sc.near = 1; sc.far = 260;
+  sun.shadow.bias = -0.0005; sun.shadow.normalBias = 0.06;
   scene.add(sun, sun.target);
-  const SUN_OFFSET = new THREE.Vector3(40, 90, 26);
+  const SUN_OFFSET = new THREE.Vector3(40, 90, 26), SUN_DIST = SUN_OFFSET.length();
 
   // --- Suelo ---
-  const outer = new THREE.Mesh(new THREE.PlaneGeometry(1400, 1400), new THREE.MeshStandardMaterial({ color: 0x1d3320, roughness: 1 }));
+  const outer = new THREE.Mesh(new THREE.PlaneGeometry(1400, 1400), new THREE.MeshStandardMaterial({ color: 0x33552c, roughness: 1 })); // más allá del límite: suelo de bosque
   outer.rotation.x = -Math.PI / 2; outer.position.y = -0.05; outer.receiveShadow = true; root.add(outer);
 
   const SEG = 100, EDGE = WORLD_HALF * 2 + 8, gg = new THREE.PlaneGeometry(EDGE, EDGE, SEG, SEG);
@@ -74,7 +78,8 @@ export function buildLobby(scene: THREE.Scene): Lobby {
   ground.receiveShadow = true; root.add(ground);
 
   // suelo adoquinado de la ciudad, avenidas y plaza
-  const flat = (geo: THREE.BufferGeometry, mat: THREE.Material, y: number) => { const m = new THREE.Mesh(geo, mat); m.rotation.x = -Math.PI / 2; m.position.y = y; m.receiveShadow = true; root.add(m); return m; };
+  // Capas de pavimento casi coplanares: además de la altura, un desplazamiento de profundidad por capa evita que parpadeen a lo lejos.
+  const flat = (geo: THREE.BufferGeometry, mat: THREE.Material, y: number) => { const m = new THREE.Mesh(geo, mat); mat.polygonOffset = true; mat.polygonOffsetFactor = mat.polygonOffsetUnits = -Math.round(y * 100); m.renderOrder = y; m.rotation.x = -Math.PI / 2; m.position.y = y; m.receiveShadow = true; root.add(m); return m; };
   flat(new THREE.CircleGeometry(CITY_R + 1, 96), new THREE.MeshStandardMaterial({ map: noiseTexture(0x8c877b, 0.3, { cell: 4, repeat: 38, seed: 11 }), roughness: 1 }), 0.015);
   const avenue = new THREE.MeshStandardMaterial({ map: noiseTexture(0xa59e8f, 0.2, { lines: 8, repeat: 1, seed: 21 }), roughness: 0.95 });
   const av = (len: number, w: number, x: number, z: number, ry: number, y: number) => {
@@ -101,9 +106,7 @@ export function buildLobby(scene: THREE.Scene): Lobby {
   court.position.x = 0; court.position.z = (CASTLE_RECT.z0 + CASTLE_RECT.z1) / 2;
   (court.material as THREE.MeshStandardMaterial).map!.repeat.set(cw / 6, cd / 6);
   const pathMat = new THREE.MeshStandardMaterial({ map: noiseTexture(0xbfb7a4, 0.16, { lines: 4, repeat: 1, seed: 52 }), roughness: 0.9 });
-  const path = flat(new THREE.PlaneGeometry(7.4, 18), pathMat, 0.065); path.position.set(0, 0.065, CASTLE_RECT.z1 - 9); (path.material as THREE.MeshStandardMaterial).map!.repeat.set(2, 5);
-  const apron = flat(new THREE.CircleGeometry(4.4, 8), std(0xcfc8b6), 0.07); apron.position.set(0, 0.07, -52);
-  const plinthLine = flat(new THREE.RingGeometry(3.7, 4.4, 8), std(0x8a8578), 0.072); plinthLine.position.set(0, 0.072, -52);
+  const path = flat(new THREE.PlaneGeometry(8.4, 30), pathMat, 0.065); path.position.set(0, 0.065, CASTLE_RECT.z1 - 15); (path.material as THREE.MeshStandardMaterial).map!.repeat.set(2, 8);
 
   // --- Geometría fusionada ---
   const M = new Merge();
@@ -134,10 +137,19 @@ export function buildLobby(scene: THREE.Scene): Lobby {
     const lab = textSprite(GATE_NAMES[i]!, "#cfe8ff", 1.1); lab.position.set(cx, 22, cz); labels.add(lab);
   });
   castle(M, labels, ctx);
+  // estatua de la diosa en la cabecera de la catedral
+  const goddess = goddessFountain(GODDESS_STATUE.x, GODDESS_STATUE.z, { scale: 0.8, figure: 1.9 });
+  root.add(goddess.group);
+  { const l = textSprite("Estatua de la Diosa", "#f5d76a", 0.8); l.position.set(GODDESS_STATUE.x, 7.4, GODDESS_STATUE.z + 1); labels.add(l); }
 
   // catedral y edificios
   for (const b of BUILDINGS) {
-    if (b.kind === "cathedral") { const { top } = cathedral(M, b); const l = textSprite(b.name, "#ffe9b0", 1.2); l.position.set(b.x, top + 4, b.z); labels.add(l); continue; }
+    if (b.kind === "cathedral") {
+      const { top } = cathedral(M, b); const l = textSprite(b.name, "#ffe9b0", 1.2); l.position.set(b.x, top + 4, b.z); labels.add(l);
+      // luz cálida de las lámparas de corona (nave y crucero)
+      for (const [dz, y] of [[6.6, 7.6], [-3, 8.2]] as const) { const pl = new THREE.PointLight(0xffd9a0, 26, 22, 2); pl.position.set(b.x, y, b.z + dz); root.add(pl); }
+      continue;
+    }
     const glow = b.kind === "forge" ? 0xff8a3a : WARM;
     const { roofY, rh } = house(M, b, ctx, { glow });
     const fd = (b.facing % 2 === 0 ? b.d : b.w) / 2;
@@ -153,12 +165,35 @@ export function buildLobby(scene: THREE.Scene): Lobby {
       M.box("glow", 0.5, 0.2, 0.3, p.x + 0.0, 0.92, p.z, 0xff8a3a);
     }
     if (b.kind === "bank") for (const s of [-1, 1]) { const p = onFace(b.x, b.z, b.facing, s * (b.w / 2 - 1), fd + 0.7); M.box("solid", 0.7, b.h, 0.7, p.x, b.h / 2 + 0.5, p.z, 0xe2ddd0); M.box("solid", 1.0, 0.3, 1.0, p.x, b.h + 0.6, p.z, 0xcfc8b6); }
-    if (b.kind === "guild") for (const s of [-1, 0, 1]) { const p = onFace(b.x, b.z, b.facing, s * 5.2, fd + 0.2); M.put("solid", bannerGeo(1.3, 4.0), s === 0 ? 0xd9b13b : 0x7a2f3a, p.x, 7.6, p.z, RY[b.facing]!); }
-    if (b.kind === "market") for (let k = -1; k <= 1; k++) { // toldos a rayas en la fachada
-      const p = onFace(b.x, b.z, b.facing, k * 4.6, fd + 1.0);
-      M.box("solid", 3.9, 0.1, 2.1, p.x, 2.95, p.z, [0xc0392b, 0xf2ead8, 0x2e86c1][k + 1]!, RY[b.facing]!, 0.0, 0.0);
-      for (const s of [-1.7, 1.7]) { const q = onFace(b.x, b.z, b.facing, k * 4.6 + s, fd + 1.9); M.box("solid", 0.1, 2.9, 0.1, q.x, 1.45, q.z, WOOD); }
-      M.box("solid", 3.4, 0.5, 1.0, p.x, 0.5, onFace(b.x, b.z, b.facing, 0, fd + 1.3).z + 0.0, 0x7a5a38, RY[b.facing]!);
+    if (b.kind === "guild") guildBanners(M, b);
+    if (b.kind === "market") { // casa de subastas: toldos a rayas colgados de la fachada y cartel
+      // Los toldos salen del muro (sin postes ni mostradores): la plaza de delante queda despejada para el subastador y su mostrador.
+      const fc = onFace(b.x, b.z, b.facing, 0, fd), TH = 0.38, ZB = 0.2, ZF = 1.7, YB = 3.3, YF = 2.7;
+      const loc = (geo: THREE.BufferGeometry, color: number, along: number, y: number, out: number, rx = 0) => {
+        if (rx) geo.rotateX(rx); geo.translate(along, y, out); M.put("solid", geo, color, fc.x, 0, fc.z, RY[b.facing]!);
+      };
+      const len = Math.hypot(ZF - ZB, YB - YF) + 0.1, mid = [(ZF + ZB) / 2, (YB + YF) / 2 + 0.03] as const;
+      for (let k = -1; k <= 1; k++) {
+        const col = [0xc0392b, 0x7a2f3a, 0x2e86c1][k + 1]!, along = k * 4.6, N = 5, SW = 3.9 / N;
+        for (let i = 0; i < N; i++) {
+          const main = i % 2 === 0, x = along - 1.95 + SW * (i + 0.5);
+          loc(new THREE.BoxGeometry(SW, 0.06, len), main ? col : 0xf2ead8, x, mid[1], mid[0], TH);
+          loc(new THREE.BoxGeometry(SW, 0.22, 0.05), main ? 0xf2ead8 : col, x, YF - 0.12, ZF + 0.03);
+        }
+        for (const s of [-1.9, 1.9]) loc(new THREE.BoxGeometry(0.06, 0.06, len + 0.05), TIMBER, along + s, mid[1] - 0.06, mid[0], TH); // viguetas laterales
+        for (const s of [-1.5, 0, 1.5]) loc(new THREE.BoxGeometry(0.04, 0.04, 1.3), 0x2b2b2e, along + s, YB - 0.62, ZB + 0.65, 0.6); // tirantes de hierro hacia el muro
+      }
+      // cartel "Casa de subastas": tabla de madera sobre la puerta, con el texto en una losa de lienzo
+      const cv = document.createElement("canvas"); cv.width = 1024; cv.height = 200;
+      const cg = cv.getContext("2d")!;
+      cg.fillStyle = "#3d2a18"; cg.fillRect(0, 0, 1024, 200); cg.strokeStyle = "#d9b13b"; cg.lineWidth = 7; cg.strokeRect(10, 10, 1004, 180);
+      cg.fillStyle = "#f5d76a"; cg.font = "bold 92px Georgia, serif"; cg.textAlign = "center"; cg.textBaseline = "middle"; cg.fillText("Casa de subastas", 512, 106);
+      const ctex = new THREE.CanvasTexture(cv); ctex.colorSpace = THREE.SRGBColorSpace; ctex.anisotropy = 8;
+      const sign = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 0.66), new THREE.MeshStandardMaterial({ map: ctex, emissive: 0xffffff, emissiveMap: ctex, emissiveIntensity: 0.35, roughness: 0.9 }));
+      const sp = onFace(b.x, b.z, b.facing, 0, fd + 0.3 + 0.07);
+      sign.position.set(sp.x, 4.75, sp.z); sign.rotation.y = RY[b.facing]!; root.add(sign);
+      const bp = onFace(b.x, b.z, b.facing, 0, fd + 0.3);
+      M.box("solid", 3.6, 0.82, 0.1, bp.x, 4.75, bp.z, TIMBER, RY[b.facing]!);
     }
     if (b.name) { const l = textSprite(b.name, "#ffe9b0", 0.9); l.position.set(b.x, roofY + rh + 3.2, b.z); labels.add(l); }
   }
@@ -200,7 +235,8 @@ export function buildLobby(scene: THREE.Scene): Lobby {
   BUILDINGS.forEach((b, i) => {
     if (b.kind !== "house" || i % 2) return;
     const dir = (b.facing + 1) % 4, p = onFace(b.x, b.z, dir, (r() - 0.5) * 3, (dir % 2 === 0 ? b.d : b.w) / 2 + 0.8);
-    if (r() < 0.55) barrels.push(p); else crates.push({ ...p, ry: r() * 3 });
+    const free = !STALLS.some(s => s.house === b.id && s.dir === dir); // esa pared la ocupa un puesto
+    if (r() < 0.55) { if (free) barrels.push(p); } else { const ry = r() * 3; if (free) crates.push({ ...p, ry }); }
   });
 
   // --- Puentes/muelle del lago y cabaña ---
@@ -210,6 +246,12 @@ export function buildLobby(scene: THREE.Scene): Lobby {
   for (let k = 0; k < 6; k++) for (const s of [-1, 1]) M.box("solid", 0.2, 1.4, 0.2, pierX0 - k * 2.0, 0.2, pierZ + s * 1.3, WOOD);
   M.cyl("solid", 0.3, 0.3, 1.0, 8, pierX0 - 5.5, 0.55, pierZ + 0.8, 0x7a5a38); M.cyl("solid", 0.3, 0.3, 1.0, 8, pierX0 - 4.8, 0.55, pierZ - 0.6, 0x7a5a38);
   M.box("solid", 0.12, 2.4, 0.12, pierX0 - 9.5, 1.7, pierZ + 1.3, TIMBER); M.box("glow", 0.35, 0.4, 0.35, pierX0 - 9.5, 3.1, pierZ + 1.3, 0xffd48a);
+  // --- Puestos de mercaderes (ver stalls.ts) ---
+  const stallLabels = STALLS.map(s => {
+    stall(M, s);
+    const l = textSprite(STALL_KINDS[s.kind]!.name, "#fff3d0", 0.5); l.position.set(s.x, 4.3, s.z); l.visible = false; labels.add(l);
+    return l;
+  });
   M.build(root);
   const props = (geo: THREE.BufferGeometry, mat: THREE.Material, items: { x: number; y: number; z: number; ry?: number }[]) => {
     const im = new THREE.InstancedMesh(geo, mat, items.length);
@@ -223,23 +265,6 @@ export function buildLobby(scene: THREE.Scene): Lobby {
   const fountain = buildFountain(FOUNTAIN.r); fountain.group.position.set(FOUNTAIN.x, 0, FOUNTAIN.z);
   root.add(fountain.group);
 
-  // --- Puestos del mercado ---
-  const woodMat = std(WOOD);
-  for (const s of STALLS) {
-    const g = new THREE.Group(); g.position.set(s.x, 0, s.z); g.rotation.y = Math.atan2(-s.x, -s.z) + Math.PI;
-    const add = (w: number, h: number, d: number, mat: THREE.Material, x: number, y: number, z: number) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(x, y, z); g.add(m); return m; };
-    add(2.4, 0.12, 1.3, woodMat, 0, 0.95, 0); add(2.3, 0.9, 1.2, std(0x7a5a38), 0, 0.45, 0);
-    for (const sx of [-1.1, 1.1]) for (const sz of [-0.55, 0.55]) add(0.1, 2.3, 0.1, woodMat, sx, 1.15, sz);
-    const stripe = document.createElement("canvas"); stripe.width = 128; stripe.height = 8;
-    const sg = stripe.getContext("2d")!, col = "#" + new THREE.Color(s.color).getHexString();
-    for (let i = 0; i < 8; i++) { sg.fillStyle = i % 2 ? "#f2ead8" : col; sg.fillRect(i * 16, 0, 16, 8); }
-    const stripeTex = new THREE.CanvasTexture(stripe); stripeTex.colorSpace = THREE.SRGBColorSpace; stripeTex.magFilter = THREE.NearestFilter;
-    const awning = add(2.8, 0.08, 1.9, new THREE.MeshStandardMaterial({ map: stripeTex, roughness: 0.9 }), 0, 2.35, 0.1); awning.rotation.x = 0.22;
-    for (let i = 0; i < 6; i++) { const f = new THREE.Mesh(new THREE.IcosahedronGeometry(0.12, 0), std([0xc0392b, 0xe6a21f, 0x7ab648][i % 3]!)); f.position.set(-0.9 + i * 0.36, 1.1, 0.1 * ((i % 2) - 0.5)); g.add(f); }
-    g.traverse(o => { if ((o as THREE.Mesh).isMesh) { (o as THREE.Mesh).castShadow = true; (o as THREE.Mesh).receiveShadow = true; } });
-    root.add(g);
-  }
-
   // --- Farolas (instanciadas) + luces dinámicas que siguen al jugador ---
   const lampGeo = colorParts([
     [new THREE.BoxGeometry(0.34, 0.3, 0.34), 0x2b2b2e, 0, 0.15, 0], [new THREE.BoxGeometry(0.16, 3.2, 0.16), 0x2b2b2e, 0, 1.7, 0],
@@ -252,6 +277,17 @@ export function buildLobby(scene: THREE.Scene): Lobby {
     dummy.position.set(l.x, 3.62, l.z); dummy.updateMatrix(); lampGlow.setMatrixAt(i, dummy.matrix);
   });
   lampPost.castShadow = true; for (const m of [lampPost, lampGlow]) { m.computeBoundingSphere(); root.add(m); }
+  // banderín del color del barrio en cada farola (instanciado; el color de instancia tiñe el paño)
+  const pennant = new THREE.InstancedMesh(colorParts([[pennantGeo(0.7, 0.4), 0xffffff, 0.09, 2.78, 0]]), vcMat({ side: THREE.DoubleSide }), LAMPS.length);
+  LAMPS.forEach((l, i) => {
+    dummy.position.set(l.x, 0, l.z); dummy.rotation.set(0, hash2(l.x, l.z) * Math.PI * 2, 0); dummy.updateMatrix(); pennant.setMatrixAt(i, dummy.matrix);
+    pennant.setColorAt(i, new THREE.Color(DISTRICTS[districtAt(l.x, l.z)].color));
+  });
+  pennant.castShadow = true; pennant.computeBoundingSphere(); root.add(pennant);
+  // Luz cálida dentro de los interiores (Gremio y talleres): dos luces que siguen al interior más cercano.
+  const roomLights = BUILDINGS.filter(isEnterable).map(b => { const f = interiorFrame(b); return { ...f.at(0, f.depth * 0.55), y: interiorH(b) - 1.1, big: b.kind === "guild" }; });
+  for (const dx of [-9, 9]) roomLights.push({ x: GREAT_HALL.x + dx, z: GREAT_HALL.z, y: 9, big: true }); // salón del trono
+  const roomPool = [0, 1].map(() => { const pl = new THREE.PointLight(0xffc98a, 0, 14, 1.6); pl.position.set(0, -50, 0); scene.add(pl); return pl; });
   const lightPool: THREE.PointLight[] = [];
   for (let i = 0; i < 8; i++) { const pl = new THREE.PointLight(0xffb866, 30, 17, 2); pl.position.set(0, -50, 0); scene.add(pl); lightPool.push(pl); }
   let lightClock = 0;
@@ -285,6 +321,7 @@ export function buildLobby(scene: THREE.Scene): Lobby {
   };
   const tint = () => new THREE.Color().setHSL(0.27 + (r() - 0.5) * 0.05, 0.1, 0.78 + r() * 0.3).getHex();
   for (const [geo, kind] of [[pine, 0], [round, 1]] as const) chunked(geo, leaf, TREES.filter(t => t.kind === kind).map(t => ({ x: t.x, z: t.z, s: t.s, ry: r() * 6.28, color: tint() })));
+  frontier(chunked, pine, round, leaf, tint, root);
   chunked(new THREE.IcosahedronGeometry(0.8, 0), std(0xffffff), ROCKS.map(p => ({ x: p.x, y: 0.15, z: p.z, s: p.s, sy: p.s * 0.65, ry: r() * 6.28, color: new THREE.Color().setHSL(0.6, 0.04, 0.45 + r() * 0.25).getHex() })));
 
   // --- Hierba y flores alrededor ---
@@ -463,12 +500,32 @@ export function buildLobby(scene: THREE.Scene): Lobby {
 
   // ---------- animación ----------
   const snap = new THREE.Vector3(), fv = new THREE.Vector3();
+  // Ejes del plano de la luz: la sombra se mueve en pasos de un texel exacto, así no tiembla al caminar.
+  const lDir = SUN_OFFSET.clone().normalize(), lRight = new THREE.Vector3(0, 1, 0).cross(lDir).normalize(), lUp = lDir.clone().cross(lRight).normalize();
+  let lampK = 1;
+  const lampOn = new THREE.Color(0xffd48a), lampOff = new THREE.Color(0x8a8070);
+  const lights: SkyLights = {
+    sun, hemi,
+    setNight(k) {
+      lampK = k; setWindowGlow(0.55 + 0.45 * k);
+      (lampGlow.material as THREE.MeshBasicMaterial).color.copy(lampOff).lerp(lampOn, k);
+    },
+  };
+  const TEXEL = (SH * 2) / sun.shadow.mapSize.x;
   return {
-    ground,
-    update(dt, t, focus) {
-      snap.set(Math.round(focus.x / 2) * 2, 0, Math.round(focus.z / 2) * 2);
+    ground, lights,
+    update(dt, t, focus, lightDir) {
+      goddess.update(t);
+      if (lightDir && lightDir.distanceToSquared(lDir) > 1e-6) { // el sol se mueve: rehace los ejes del plano de la luz
+        lDir.copy(lightDir); SUN_OFFSET.copy(lDir).multiplyScalar(SUN_DIST);
+        lRight.set(0, 1, 0).cross(lDir).normalize(); lUp.copy(lDir).cross(lRight).normalize();
+      }
+      fv.set(focus.x, 0, focus.z);
+      const sr = Math.round(fv.dot(lRight) / TEXEL) * TEXEL, su = Math.round(fv.dot(lUp) / TEXEL) * TEXEL;
+      snap.copy(lRight).multiplyScalar(sr).addScaledVector(lUp, su);
       sun.target.position.copy(snap); sun.position.copy(snap).add(SUN_OFFSET);
       fountain.update(t);
+      STALLS.forEach((s, i) => { stallLabels[i]!.visible = (s.x - focus.x) ** 2 + (s.z - focus.z) ** 2 < 26 * 26; });
       lake.position.y = 0.06 + Math.sin(t * 1.1) * 0.012;
       for (const b of blades) b.rotation.z = t * 0.5;
       boats.forEach((b, i) => { b.position.y = 0.1 + Math.sin(t * 1.3 + i * 2) * 0.05; b.rotation.z = Math.sin(t * 1.1 + i) * 0.03; });
@@ -488,7 +545,84 @@ export function buildLobby(scene: THREE.Scene): Lobby {
         const near = LAMPS.map((l, i) => ({ i, d: (l.x - fv.x) ** 2 + (l.z - fv.z) ** 2 })).sort((a, b) => a.d - b.d).slice(0, lightPool.length);
         lightPool.forEach((pl, k) => { const n = near[k]; if (n && n.d < 2500) pl.position.set(LAMPS[n.i]!.x, 3.4, LAMPS[n.i]!.z); else pl.position.y = -50; });
       }
-      for (const pl of lightPool) pl.intensity = 30 + Math.sin(t * 7 + pl.position.x) * 2.2;
+      if (lightClock === 0.3) {
+        const near = roomLights.map(r => ({ r, d: (r.x - fv.x) ** 2 + (r.z - fv.z) ** 2 })).sort((a, b) => a.d - b.d);
+        roomPool.forEach((pl, k) => { const n = near[k]; if (n && n.d < 30 * 30) { pl.position.set(n.r.x, n.r.y, n.r.z); pl.intensity = n.r.big ? 60 : 22; pl.distance = n.r.big ? 22 : 10; } else { pl.position.y = -50; pl.intensity = 0; } });
+      }
+      for (const pl of lightPool) { pl.visible = lampK > 0.02; pl.intensity = (30 + Math.sin(t * 7 + pl.position.x) * 2.2) * lampK; }
     },
   };
+}
+
+// ---------- Límite del mundo ----------
+// El servidor no deja pasar de ±WORLD_HALF. Para que no se vea un borde vacío: bosque cerrado justo detrás
+// del límite, barreras de troncos donde acaban los caminos y una cordillera que cierra el horizonte.
+type Chunked = (geo: THREE.BufferGeometry, mat: THREE.Material, items: { x: number; y?: number; z: number; s: number; sy?: number; ry: number; color: number }[], cell?: number) => void;
+function frontier(chunked: Chunked, pine: THREE.BufferGeometry, round: THREE.BufferGeometry, leaf: THREE.Material, tint: () => number, root: THREE.Object3D) {
+  const r = rng(4242), H = WORLD_HALF;
+  const cheb = (x: number, z: number) => Math.max(Math.abs(x), Math.abs(z));
+  // bosque: muy denso pegado al límite y más claro hacia fuera
+  const pines: Parameters<Chunked>[2] = [], rounds: Parameters<Chunked>[2] = [];
+  // franja de ~45 m (lo que se ve a pie); más allá tapan las colinas, que cuestan mucho menos que los árboles
+  for (let i = 0, n = 0; i < 40000 && n < 2200; i++) {
+    const x = (r() * 2 - 1) * (H + 45), z = (r() * 2 - 1) * (H + 45), c = cheb(x, z);
+    if (c < H + 2.5) continue;
+    if (r() > 1 - (c - H) / 70) continue; // densidad que decae con la distancia
+    const big = 1.3 + r() * 1.4 + Math.min(1, (c - H) / 30) * 0.8;
+    (r() < 0.82 ? pines : rounds).push({ x, z, s: big, sy: big * (0.9 + r() * 0.35), ry: r() * 6.28, color: tint() }); n++;
+  }
+  chunked(pine, leaf, pines, 90); chunked(round, leaf, rounds, 90);
+
+  // barreras de troncos donde los caminos llegan al límite
+  const M = new Merge();
+  for (const a of GATE_ANGLES) {
+    const c = Math.cos(a), s = Math.sin(a), d = H - 0.6, tx = -s, tz = c, ry = Math.atan2(-c, -s); // eje x local a lo largo de la tangente
+    const at = (along: number, out: number) => ({ x: c * (d + out) + tx * along, z: s * (d + out) + tz * along });
+    for (const k of [-1, 1]) { const p = at(k * (ROAD_W / 2 + 0.3), 0); M.cyl("solid", 0.18, 0.22, 1.5, 7, p.x, 0, p.z, 0x5b3d24); }
+    for (const [y, out] of [[0.55, 0], [1.15, 0]] as const) { // largueros
+      const p = at(0, out), g = new THREE.CylinderGeometry(0.16, 0.16, ROAD_W + 1.4, 7).rotateZ(Math.PI / 2);
+      M.put("solid", g, 0x6a4a2c, p.x, y, p.z, ry);
+    }
+    for (const k of [-1, 1]) { // aspa
+      const p = at(0, 0.25), g = new THREE.CylinderGeometry(0.11, 0.11, 2.6, 6).rotateZ(Math.PI / 2 + k * 0.55);
+      M.put("solid", g, 0x4f3720, p.x, 0.85, p.z, ry);
+    }
+    const sign = at(ROAD_W / 2 - 0.4, -0.15); // cartel de "fin del camino"
+    M.box("solid", 0.12, 1.9, 0.12, sign.x, 0.95, sign.z, 0x5b3d24, ry);
+    M.box("solid", 1.1, 0.5, 0.08, sign.x, 1.65, sign.z, 0x8a6a42, ry);
+    for (let i = 0; i < 6; i++) { // troncos caídos detrás
+      const p = at((r() * 2 - 1) * (ROAD_W / 2 + 1), 2 + r() * 6), g = new THREE.CylinderGeometry(0.28, 0.32, 3 + r() * 2, 7).rotateZ(Math.PI / 2);
+      M.put("solid", g, 0x5b3d24, p.x, 0.3, p.z, ry + (r() - 0.5) * 1.2);
+    }
+  }
+  M.build(root);
+
+  // cordillera: conos bajos con vértices removidos, de verde en la base a roca y nieve en la cima
+  const parts: THREE.BufferGeometry[] = [];
+  const base = new THREE.Color(0x3d5f35), rock = new THREE.Color(0x7c7a72), snow = new THREE.Color(0xf2f2ee), tmp = new THREE.Color();
+  const hill = new THREE.Color(0x2f5a2c);
+  for (let i = 0; i < 200; i++) {
+    // tres anillos: colinas boscosas pegadas al bosque, montes y picos nevados al fondo
+    const ring = i < 100 ? 0 : i < 150 ? 1 : 2;
+    const a = (i / (ring === 0 ? 100 : 50)) * Math.PI * 2 + (r() - 0.5) * 0.08;
+    const ca = Math.cos(a), sa = Math.sin(a), edge = H / Math.max(Math.abs(ca), Math.abs(sa)); // borde cuadrado en esa dirección
+    const far = ring === 2, dist = edge + [55, 140, 230][ring]! + r() * [40, 60, 60][ring]!;
+    const h = [14, 45, 90][ring]! + r() * [16, 40, 70][ring]!, rad = Math.min(h * (ring === 0 ? 2.6 + r() : 1.1 + r() * 0.5), dist - edge - 22); // la falda no invade el mundo
+    const g = new THREE.ConeGeometry(rad, h, ring === 0 ? 8 : 7, 3).toNonIndexed();
+    const pos = g.attributes.position!, col = new Float32Array(pos.count * 3);
+    for (let v = 0; v < pos.count; v++) {
+      const x = pos.getX(v), y = pos.getY(v), z = pos.getZ(v), k = (y + h / 2) / h; // 0 base, 1 cima
+      const j = Math.sin(x * 0.31 + i) * Math.cos(z * 0.27 + i * 1.7) * rad * 0.12 * (1 - k);
+      pos.setXYZ(v, x + j, y + h / 2 - 2, z - j);
+      if (ring === 0) tmp.copy(hill).multiplyScalar(0.85 + k * 0.3); // colina cubierta de bosque
+      else tmp.copy(base).lerp(rock, THREE.MathUtils.smoothstep(k, 0.25, 0.55));
+      if (far && k > 0.78) tmp.copy(snow);
+      col[v * 3] = tmp.r; col[v * 3 + 1] = tmp.g; col[v * 3 + 2] = tmp.b;
+    }
+    g.setAttribute("color", new THREE.BufferAttribute(col, 3)); g.deleteAttribute("uv"); g.computeVertexNormals();
+    g.rotateY(r() * 6.28); g.translate(ca * dist, 0, sa * dist);
+    parts.push(g);
+  }
+  const range = new THREE.Mesh(mergeGeometries(parts)!, new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 1 }));
+  range.matrixAutoUpdate = false; root.add(range);
 }

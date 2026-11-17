@@ -4,7 +4,9 @@ export const PLAYER = { speed: 6, maxHp: 100, damage: 12, range: 2.5, cooldown: 
 export const MOB = { speed: 3, maxHp: 50, damage: 6, range: 1.8, cooldown: 1.5, aggro: 10, leash: 18, respawnSec: 10, count: 22 };
 
 // Escoba voladora (tecla R): más rápida, sube y baja, pasa por encima de lo que sea más bajo que ella.
-export const FLY = { speedMult: 2.6, vSpeed: 9, minY: 1.4, maxY: 75, fallSpeed: 20 };
+/** Duración de un día completo del juego en segundos reales (24 min: una hora del juego = un minuto). */
+export const DAY_CYCLE_SEC = 24 * 60;
+export const FLY = { speedMult: 2.6, vSpeed: 13, minY: 1.4, maxY: 75, fallSpeed: 20 };
 
 export interface Mover { x: number; z: number; tx: number; tz: number }
 

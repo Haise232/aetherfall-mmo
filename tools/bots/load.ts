@@ -30,6 +30,7 @@ async function runLevel(n: number) {
     ws.on("open", () => {
       open++;
       ws.send(JSON.stringify({ t: "join", name: `Bot${i}_${Date.now() % 100000}` }));
+      ws.send(JSON.stringify({ t: "create", cls: ["knight", "barbarian", "mage", "rogue"][i % 4], style: i % 3, tone: i % 6 }));
       timers.push(setInterval(() => {
         if (ws.readyState !== ws.OPEN) return;
         const outside = Math.hypot(mx, mz) > 134;

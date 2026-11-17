@@ -7,7 +7,7 @@ const mat = (color: number, extra: THREE.MeshStandardMaterialParameters = {}) =>
 const FUR = mat(0x6e7279), FUR_DARK = mat(0x44474d), FUR_LIGHT = mat(0xa4a7ad), NOSE = mat(0x111111);
 const EYE = mat(0xff3b1f, { emissive: 0xff2200, emissiveIntensity: 1.2 });
 const TOOTH = mat(0xf2efe6);
-const SHADOW = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35, depthWrite: false });
+const SHADOW = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.3, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -12, polygonOffsetUnits: -12 });
 
 const ico = (r: number, sx: number, sy: number, sz: number, m: THREE.Material) => {
   const g = new THREE.IcosahedronGeometry(r, 1); g.scale(sx, sy, sz);
@@ -30,6 +30,9 @@ export class Wolf {
   private lunge = 0;
   private fall = 0;
   private dead = false;
+  private flashT = 0; // destello blanco al recibir un golpe
+  private recoil = 0; // retroceso al recibir un golpe
+  private mats: THREE.MeshStandardMaterial[] = [];
 
   constructor() {
     const { root, head, jaw, tail } = this;
@@ -83,13 +86,24 @@ export class Wolf {
 
     // Sombra de contacto.
     const shadow = new THREE.Mesh(new THREE.CircleGeometry(0.95, 16), SHADOW);
-    shadow.rotation.x = -Math.PI / 2; shadow.position.y = 0.02; shadow.scale.set(0.8, 1.25, 1);
+    shadow.rotation.x = -Math.PI / 2; shadow.position.y = 0.09; shadow.renderOrder = 2; shadow.scale.set(0.8, 1.25, 1);
 
     this.hitbox = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.3, 2.1), new THREE.MeshBasicMaterial({ visible: false }));
     this.hitbox.position.y = 0.7;
 
     this.group.add(shadow, root, this.hitbox);
+    // materiales propios de cada lobo: el destello no debe encender a toda la manada
+    const own = new Map<THREE.Material, THREE.MeshStandardMaterial>();
+    root.traverse(o => {
+      const m = o as THREE.Mesh; if (!m.isMesh || m.material === EYE) return;
+      const src = m.material as THREE.MeshStandardMaterial;
+      let c = own.get(src); if (!c) { c = src.clone(); own.set(src, c); this.mats.push(c); }
+      m.material = c;
+    });
   }
+
+  /** Reacción a un golpe: destello y retroceso. */
+  hurt(strong = false) { this.flashT = 1; this.recoil = strong ? 1.6 : 1; }
 
   /** Dispara el zarpazo/mordisco. */
   attack() { this.lunge = 1; }
@@ -108,6 +122,11 @@ export class Wolf {
     this.move01 += (target - this.move01) * Math.min(1, dt * 10);
     this.phase += dt * (5 + speed * 1.4) * this.move01;
     this.lunge = Math.max(0, this.lunge - dt * 3.5);
+    this.recoil = Math.max(0, this.recoil - dt * 5);
+    if (this.flashT > 0 || this.mats[0]!.emissiveIntensity > 0) {
+      this.flashT = Math.max(0, this.flashT - dt * 6);
+      for (const m of this.mats) { m.emissive.setHex(0xffffff); m.emissiveIntensity = this.flashT * 0.9; }
+    }
 
     this.fall = this.dead ? Math.min(1, this.fall + dt * 2.5) : 0;
     const m = this.move01, s = Math.sin(this.phase);
@@ -117,12 +136,13 @@ export class Wolf {
     const breath = Math.sin(this.t * 2.2) * 0.012;
     // Salto de ataque: arco rápido hacia delante.
     const l = Math.sin(this.lunge * Math.PI);
-    this.root.position.set(0, Math.abs(s) * 0.07 * m + breath + l * 0.12, l * 0.45);
-    this.root.rotation.x = -l * 0.25 + s * 0.02 * m;
+    const r = Math.sin(Math.min(1, this.recoil) * Math.PI) * Math.max(1, this.recoil); // sacudida hacia atrás
+    this.root.position.set(0, Math.abs(s) * 0.07 * m + breath + l * 0.12, l * 0.45 - r * 0.22);
+    this.root.rotation.x = -l * 0.25 + s * 0.02 * m + r * 0.12;
     this.root.rotation.z = this.fall * 1.5;
     if (this.dead) this.root.position.y = this.fall * 0.25;
 
-    this.head.rotation.x = l * 0.5 + Math.sin(this.t * 1.3) * 0.03 + (this.dead ? this.fall * 0.3 : 0);
+    this.head.rotation.x = l * 0.5 - r * 0.35 + Math.sin(this.t * 1.3) * 0.03 + (this.dead ? this.fall * 0.3 : 0);
     this.head.rotation.y = this.dead ? 0 : Math.sin(this.t * 0.9) * 0.06 * (1 - m);
     this.jaw.rotation.x = l * 0.7 + (this.dead ? this.fall * 0.25 : 0);
 

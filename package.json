@@ -11,7 +11,8 @@
     "dev:server": "npm run dev -w @mmorpg/server",
     "dev:client": "npm run dev -w @mmorpg/client",
     "typecheck": "tsc -b",
-    "build": "tsc -b && npm run build -w @mmorpg/client"
+    "build": "tsc -b && npm run build -w @mmorpg/client",
+    "start": "npm run start -w @mmorpg/server"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

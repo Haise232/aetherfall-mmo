@@ -120,6 +120,8 @@ export function flareConeGeo(r: number, h: number, seg: number) {
 export type Group = "solid" | "glow";
 const solidMat = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.95 });
 const glowMat = new THREE.MeshBasicMaterial({ vertexColors: true });
+/** Brillo de ventanas, vidrieras y braseros: más apagado de día, pleno de noche. */
+export function setWindowGlow(k: number) { glowMat.color.setScalar(k); }
 
 export class Merge {
   private bins = new Map<string, THREE.BufferGeometry[]>();
