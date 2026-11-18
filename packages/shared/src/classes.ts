@@ -36,13 +36,14 @@ export interface PassiveDef {
   lifesteal?: number; // fracción del daño hecho que te cura
 }
 // Monturas (tecla R). Solo la escoba vuela; las demás corren por el suelo y chocan con los muros como a pie.
-export type MountId = "broom" | "horse" | "warhorse" | "goat" | "panther";
+export type MountId = "broom" | "horse" | "warhorse" | "goat" | "panther" | "dragon";
 export const MOUNTS: Record<MountId, { name: string; flies: boolean; speedMult: number }> = {
   broom: { name: "Escoba voladora", flies: true, speedMult: 2.6 },
   horse: { name: "Caballo", flies: false, speedMult: 2.3 },
   warhorse: { name: "Corcel sagrado", flies: false, speedMult: 2.4 },
   goat: { name: "Cabra montesa", flies: false, speedMult: 2.1 },
   panther: { name: "Pantera sombría", flies: false, speedMult: 2.4 },
+  dragon: { name: "Dragón", flies: true, speedMult: 3.2 }, // se gana derrotando al jefe dragón
 };
 export interface StyleDef {
   name: string;

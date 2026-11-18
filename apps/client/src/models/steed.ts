@@ -164,7 +164,7 @@ function skin(sts: St[], z0: number, z1: number, nz: number, t0: number, t1: num
 // Descripción de cada montura
 // ---------------------------------------------------------------------------------------------------------------
 type Shape = "horse" | "goat" | "panther";
-type Id = Exclude<MountId, "broom">;
+type Id = Exclude<MountId, "broom" | "dragon">;
 interface Pal {
   coat: number; coatD: number; belly: number; mane: number; hoof: number;
   cloth: number; trim: number; leather: number; eye?: number; holy?: boolean; horn?: number;

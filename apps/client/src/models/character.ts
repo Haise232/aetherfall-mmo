@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { GLTFLoader, type GLTF } from "three/addons/loaders/GLTFLoader.js";
 import * as SkeletonUtils from "three/addons/utils/SkeletonUtils.js";
-import { CLASSES, TONES, classOf, type LookSel } from "@mmorpg/shared";
+import { CLASSES, SWIM, TONES, classOf, type LookSel } from "@mmorpg/shared";
 
 // Personajes con esqueleto y animaciones (KayKit Adventurers, CC0; ver public/models/CREDITOS.md).
 // Los cinco modelos comparten el mismo esqueleto, así que las armas de uno valen en la mano de otro.
@@ -137,6 +137,12 @@ export class Character {
   private pendingAttack = false;
   private flashT = 0;
   private praying = false;
+  // nadar: el cuerpo se tumba y se hunde en el agua; brazos y piernas se mueven por código (no hay clip de nadar)
+  private swim = false;
+  private swimK = 0; // 0 en tierra, 1 en el agua (transición)
+  private swimMove = 0; // 0 flotando erguido, 1 braceando tumbado
+  private swimPh = 0;
+  private swimBones?: Record<string, THREE.Object3D | undefined>;
   /** Postura de descanso (banco, suelo o tumbado); null: de pie. */
   private pose: "chair" | "floor" | "lie" | null = null;
   private mats: THREE.MeshStandardMaterial[] = [];
@@ -285,7 +291,14 @@ export class Character {
   pray() { if (this.dead || this.riding || !this.mixer || this.praying) return; this.praying = true; this.oneShot = "Sit_Floor_Down"; this.play("Sit_Floor_Down", 0.12, true, 1.1); }
   /** Termina la oración y se levanta. */
   stopPray() { if (!this.praying) return; this.oneShot = "Sit_Floor_StandUp"; this.play("Sit_Floor_StandUp", 0.12, true, 1.1); }
-  setDead(d: boolean) { if (d === this.dead) return; this.dead = d; this.praying = false; this.oneShot = ""; if (!d) this.current = ""; }
+  /** Nadar: tumbado boca abajo y hundido al avanzar (crol); parado, flota erguido con el agua a los hombros. */
+  setSwimming(on: boolean) {
+    if (on === this.swim) return;
+    this.swim = on;
+    if (on) { this.oneShot = ""; this.praying = false; }
+  }
+  get swimming() { return this.swim; }
+  setDead(d: boolean) { if (d === this.dead) return; this.dead = d; this.praying = false; this.oneShot = ""; if (!d) { this.current = ""; this.actions.get("Death_A")?.fadeOut(0.2); } } // al reaparecer, que la muerte no siga mezclada con el reposo
   /** Al montar se sienta con un gesto; al bajar deja de estar sentado. */
   setRiding(on: boolean) {
     if (on === this.riding) return;
@@ -321,6 +334,7 @@ export class Character {
       au.orbs.forEach((o, i) => { const a = t * 1.5 + (i * Math.PI * 2) / 3; o.position.set(auraV.x + Math.cos(a) * 0.95, auraV.y + 0.1 + Math.sin(t * 2 + i * 2.1) * 0.25, auraV.z + Math.sin(a) * 0.95); o.children[1]!.scale.setScalar(1 + Math.sin(t * 5 + i) * 0.2); });
     }
     if (this.dead) this.play("Death_A", 0.12, this.current !== "Death_A");
+    else if (this.swim) { if (!this.oneShot) this.play("Idle", 0.2); }
     else if (this.riding) { if (!this.oneShot) this.play("Sit_Chair_Idle", 0.2); }
     else if (this.airborne) this.play("Jump_Idle", 0.15);
     else if (!this.oneShot) {
@@ -329,7 +343,50 @@ export class Character {
       else this.play("Running_A", 0.18, false, Math.max(0.8, speed / 5.5));
     }
     this.mixer.update(dt);
+    const sw = this.swim && !this.dead;
+    if (sw || this.swimK > 0) this.animateSwim(dt, speed, sw);
   }
+
+  /** Postura y brazada: se aplica después del mezclador, encima de la animación de reposo. */
+  private animateSwim(dt: number, speed: number, on: boolean) {
+    this.swimK = Math.max(0, Math.min(1, this.swimK + (on ? dt * 3.5 : -dt * 5)));
+    const h = this.holder, k = this.swimK, e = k * k * (3 - 2 * k);
+    if (k === 0) { h.position.set(0, 0, 0); h.rotation.set(0, 0, 0); return; }
+    this.swimMove += ((on && speed > 0.35 ? 1 : 0) - this.swimMove) * Math.min(1, dt * 4);
+    const m = this.swimMove, ph = (this.swimPh += dt * Math.PI * 2 * (0.7 + m * 0.5)), tilt = SWIM_TILT * m * e;
+    // pivote en la cadera: tumbado, el cuerpo queda a ras de agua; erguido, el agua llega a los hombros
+    const yc = HIP + (((HIP - SWIM_SINK) * (1 - m) + SWIM_PRONE_Y * m + Math.sin(ph * 0.5) * 0.03) - HIP) * e;
+    h.rotation.set(tilt, Math.sin(ph * 0.5) * 0.2 * m * e, 0, "XYZ");
+    h.position.set(0, yc - HIP * Math.cos(tilt), -HIP * Math.sin(tilt));
+    const b = (this.swimBones ??= Object.fromEntries(["upperarm.l", "upperarm.r", "lowerarm.l", "lowerarm.r", "upperleg.l", "upperleg.r", "lowerleg.l", "lowerleg.r", "head", "chest"].map(n => [n, this.model?.getObjectByName(n)])));
+    const mdl = this.model; if (!mdl) return;
+    for (const s of [1, -1]) { // s = 1: lado izquierdo (+x)
+      const p = ph + (s > 0 ? Math.PI : 0), side = s > 0 ? "l" : "r";
+      // brazo: crol (molinillo: recuperación por encima del agua) o, parado, remo suave con los brazos abiertos
+      const tread = -0.9 + Math.sin(p * 1.5) * 0.35, crawl = p + 0.3;
+      rotBone(mdl, b[`upperarm.${side}`], X, (tread * (1 - m) + crawl * m) * e);
+      rotBone(mdl, b[`upperarm.${side}`], Z, s * (1.25 * (1 - m) + 0.18 * m) * e);
+      rotBone(mdl, b[`lowerarm.${side}`], X, -(0.5 * (1 - m) + Math.max(0, Math.sin(p)) * 1.2 * m) * e);
+      // piernas: patada alterna (parado, pedaleo)
+      const lp = ph * 2.2 + (s > 0 ? Math.PI : 0);
+      rotBone(mdl, b[`upperleg.${side}`], X, (Math.sin(lp) * (0.55 * (1 - m) + 0.4 * m) - 0.35 * (1 - m)) * e);
+      rotBone(mdl, b[`lowerleg.${side}`], X, (0.5 + Math.sin(lp - 0.9) * 0.45) * e * (1 - m * 0.5));
+    }
+    rotBone(mdl, b.head, X, -tilt * 0.75); // levanta la cabeza para mirar al frente
+    rotBone(mdl, b.chest, X, -tilt * 0.12);
+  }
+}
+const X = new THREE.Vector3(1, 0, 0), Z = new THREE.Vector3(0, 0, 1);
+const SWIM_TILT = 1.3, HIP = 0.95, SWIM_SINK = SWIM.depth, SWIM_PRONE_Y = 0.17;
+const qa = new THREE.Quaternion(), qb = new THREE.Quaternion();
+/** Gira un hueso `ang` rad sobre un eje del espacio del modelo (X lateral, Z hacia delante) sin conocer sus ejes locales. */
+function rotBone(model: THREE.Object3D, bone: THREE.Object3D | undefined, axis: THREE.Vector3, ang: number) {
+  if (!bone || !bone.parent) return;
+  qa.identity(); // cuaternión acumulado de los padres hasta el modelo
+  const chain: THREE.Object3D[] = []; for (let o: THREE.Object3D | null = bone.parent; o && o !== model; o = o.parent) chain.push(o);
+  for (let i = chain.length - 1; i >= 0; i--) qa.multiply(chain[i]!.quaternion);
+  qb.setFromAxisAngle(axis, ang);
+  bone.quaternion.premultiply(qa.clone().invert().multiply(qb).multiply(qa)).normalize();
 }
 
 /** Aspecto del jugador: la clase y el aspecto elegidos dan el modelo; el arma equipada se ve en la mano. */

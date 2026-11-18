@@ -2,7 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { jobOf, validLook, type Equip, type Inventory, type LookSel } from "@mmorpg/shared";
 
-export interface CharData { level: number; xp: number; inv: Inventory; equip: Equip; look?: LookSel; quest?: string; questCount?: number; completedQuests?: string[]; job?: string; jobLevel?: number; jobXp?: number; coins?: number; skillRanks?: unknown; account?: number | null } // skillRanks: estado de habilidades en JSON (lo valida validSkills)
+export interface CharData { level: number; xp: number; inv: Inventory; equip: Equip; look?: LookSel; quest?: string; questCount?: number; completedQuests?: string[]; job?: string; jobLevel?: number; jobXp?: number; coins?: number; skillRanks?: unknown; account?: number | null; mounts?: unknown } // skillRanks: estado de habilidades en JSON (lo valida validSkills)
 
 /** Orden de la casa de subastas tal como se guarda. `price` es por unidad; `qty` lo que queda; `total` lo publicado; `got` lo comprado sin recoger. */
 export interface StoredOrder { id: number; owner: string; side: "buy" | "sell"; item: string; price: number; qty: number; total: number; got: number; createdAt: number }
@@ -103,6 +103,7 @@ export class SqliteStore implements CharStore {
     if (!cols.some(c => c.name === "job_level")) this.db.exec("ALTER TABLE characters ADD COLUMN job_level INTEGER NOT NULL DEFAULT 1");
     if (!cols.some(c => c.name === "job_xp")) this.db.exec("ALTER TABLE characters ADD COLUMN job_xp INTEGER NOT NULL DEFAULT 0");
     if (!cols.some(c => c.name === "skill_ranks")) this.db.exec("ALTER TABLE characters ADD COLUMN skill_ranks TEXT"); // rangos de habilidad (JSON)
+    if (!cols.some(c => c.name === "mounts")) this.db.exec("ALTER TABLE characters ADD COLUMN mounts TEXT"); // monturas ganadas y la elegida (JSON)
     if (!cols.some(c => c.name === "coins")) this.db.exec("ALTER TABLE characters ADD COLUMN coins INTEGER NOT NULL DEFAULT 0");
     if (!cols.some(c => c.name === "account")) this.db.exec("ALTER TABLE characters ADD COLUMN account INTEGER"); // cuenta dueña (null: personaje antiguo)
     this.db.exec(`CREATE TABLE IF NOT EXISTS accounts (
@@ -123,21 +124,21 @@ export class SqliteStore implements CharStore {
     this.db.exec("CREATE INDEX IF NOT EXISTS market_orders_owner ON market_orders (owner)");
   }
   load(name: string): CharData | null {
-    const r = this.db.prepare("SELECT level, xp, inv, equip, look, quest, quest_count, completed_quests, job, job_level, job_xp, coins, skill_ranks FROM characters WHERE name = ?").get(name) as
-      | { level: number; xp: number; inv: string; equip: string; look: string | null; quest: string | null; quest_count: number; completed_quests: string; job: string | null; job_level: number; job_xp: number; coins: number; skill_ranks: string | null } | undefined;
+    const r = this.db.prepare("SELECT level, xp, inv, equip, look, quest, quest_count, completed_quests, job, job_level, job_xp, coins, skill_ranks, mounts FROM characters WHERE name = ?").get(name) as
+      | { level: number; xp: number; inv: string; equip: string; look: string | null; quest: string | null; quest_count: number; completed_quests: string; job: string | null; job_level: number; job_xp: number; coins: number; skill_ranks: string | null; mounts: string | null } | undefined;
     if (!r) return null;
     let look: LookSel | undefined;
     try { const l = JSON.parse(r.look ?? "null") as unknown[] | null; look = (l && validLook(l[0], l[1], l[2])) || undefined; } catch { /* aspecto ilegible: se vuelve a elegir */ }
     let completed: string[] = [];
     try { completed = JSON.parse(r.completed_quests) as string[]; } catch { }
-    return { level: r.level, xp: r.xp, inv: JSON.parse(r.inv), equip: JSON.parse(r.equip), look, quest: r.quest ?? undefined, questCount: r.quest_count, completedQuests: completed, job: jobOf(r.job ?? undefined)?.id, jobLevel: r.job_level, jobXp: r.job_xp, coins: r.coins, skillRanks: r.skill_ranks ? JSON.parse(r.skill_ranks) : undefined };
+    return { level: r.level, xp: r.xp, inv: JSON.parse(r.inv), equip: JSON.parse(r.equip), look, quest: r.quest ?? undefined, questCount: r.quest_count, completedQuests: completed, job: jobOf(r.job ?? undefined)?.id, jobLevel: r.job_level, jobXp: r.job_xp, coins: r.coins, skillRanks: r.skill_ranks ? JSON.parse(r.skill_ranks) : undefined, mounts: r.mounts ? JSON.parse(r.mounts) : undefined };
   }
   save(name: string, d: CharData): void {
-    this.db.prepare(`INSERT INTO characters (name, level, xp, inv, equip, look, quest, quest_count, completed_quests, job, job_level, job_xp, coins, skill_ranks, account, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    this.db.prepare(`INSERT INTO characters (name, level, xp, inv, equip, look, quest, quest_count, completed_quests, job, job_level, job_xp, coins, skill_ranks, mounts, account, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(name) DO UPDATE SET level=excluded.level, xp=excluded.xp, inv=excluded.inv,
       equip=excluded.equip, look=excluded.look, quest=excluded.quest, quest_count=excluded.quest_count, completed_quests=excluded.completed_quests,
-      job=excluded.job, job_level=excluded.job_level, job_xp=excluded.job_xp, coins=excluded.coins, skill_ranks=excluded.skill_ranks, account=COALESCE(excluded.account, characters.account), updated_at=excluded.updated_at`)
-      .run(name, d.level, d.xp, JSON.stringify(d.inv), JSON.stringify(d.equip), d.look ? JSON.stringify(d.look) : null, d.quest ?? null, d.questCount ?? 0, JSON.stringify(d.completedQuests ?? []), d.job ?? null, d.jobLevel ?? 1, d.jobXp ?? 0, d.coins ?? 0, d.skillRanks ? JSON.stringify(d.skillRanks) : null, d.account ?? null, Date.now());
+      job=excluded.job, job_level=excluded.job_level, job_xp=excluded.job_xp, coins=excluded.coins, skill_ranks=excluded.skill_ranks, mounts=COALESCE(excluded.mounts, characters.mounts), account=COALESCE(excluded.account, characters.account), updated_at=excluded.updated_at`)
+      .run(name, d.level, d.xp, JSON.stringify(d.inv), JSON.stringify(d.equip), d.look ? JSON.stringify(d.look) : null, d.quest ?? null, d.questCount ?? 0, JSON.stringify(d.completedQuests ?? []), d.job ?? null, d.jobLevel ?? 1, d.jobXp ?? 0, d.coins ?? 0, d.skillRanks ? JSON.stringify(d.skillRanks) : null, d.mounts ? JSON.stringify(d.mounts) : null, d.account ?? null, Date.now());
   }
 
   // ---- Casa de subastas ----

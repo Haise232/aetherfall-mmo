@@ -86,6 +86,22 @@ export const CASTLE_GATE_DECOR = {
 };
 export const FOUNTAIN = { x: 0, z: 0, r: 4 };
 export const LAKE = { x: -168, z: 70, r: 30 };
+/** Nadar: quien está en el agua del lago (a pie) va más despacio y no puede combatir, saltar, recolectar, sentarse ni montar. */
+export const SWIM = { speedMult: 0.55, inset: 1, depth: 0.62 }; // depth: lo que se hunde un nadador erguido (m): el agua le llega a los hombros
+/** Embarcadero del lago (a pie se camina por encima: no cuenta como agua). Mismas medidas que lo dibuja `lobby.ts`. */
+export const PIER = { x0: LAKE.x + LAKE.r + 3.5, z: LAKE.z + 2, len: 10.5, hw: 1.3 };
+/** ¿Está (x,z) dentro del agua? (`inset`: la orilla húmeda cuenta como tierra; el embarcadero también). */
+export function inWater(x: number, z: number): boolean {
+  if (Math.hypot(x - LAKE.x, z - LAKE.z) >= LAKE.r - SWIM.inset) return false;
+  return !(x <= PIER.x0 && x >= PIER.x0 - PIER.len && Math.abs(z - PIER.z) <= PIER.hw + 0.4);
+}
+/** Guarida del dragón, fuera de la muralla al noroeste: claro sin árboles de radio r. */
+export const DRAGON_LAIR = { x: -138, z: -138, r: 16 };
+/** Zonas de los enemigos de fuera (ver mobs.ts): claros sin árboles para que se vea el combate. */
+export const MOB_ZONES = {
+  boar: { x: 90, z: 186, r: 12 }, spider: { x: 176, z: -48, r: 16 }, bandit: { x: -150, z: 168, r: 13 },
+  skeleton: { x: 150, z: -150, r: 15 }, troll: { x: 0, z: -184, r: 16 },
+} as const;
 export const GATE_ANGLES = [0, Math.PI / 2, Math.PI]; // Este, Sur, Oeste (el norte lo cierra el castillo)
 export const GATE_NAMES = ["Puerta Este", "Puerta Sur", "Puerta Oeste"];
 export const GATE_HALF_WIDTH = 7;
@@ -406,7 +422,7 @@ export const MOB_SPAWNS: { x: number; z: number }[] = Array.from({ length: 22 },
   const a = Math.PI / 22 + (i * Math.PI * 2) / 22, rad = 172 + (i % 3) * 7;
   return { x: Math.cos(a) * rad, z: Math.sin(a) * rad };
 }).filter(p => Math.hypot(p.x - LAKE.x, p.z - LAKE.z) > LAKE.r + 8 && !FIELDS.some(f => p.x > f.x0 - 6 && p.x < f.x1 + 6 && p.z > f.z0 - 6 && p.z < f.z1 + 6)
-  && Math.abs(p.x) < WORLD_HALF - 6 && Math.abs(p.z) < WORLD_HALF - 6);
+  && Math.abs(p.x) < WORLD_HALF - 6 && Math.abs(p.z) < WORLD_HALF - 6 && Math.hypot(p.x - DRAGON_LAIR.x, p.z - DRAGON_LAIR.z) > DRAGON_LAIR.r + 10);
 
 function buildProps() {
   const r = rng(1337);
@@ -417,6 +433,8 @@ function buildProps() {
     WINDMILLS.every(w => Math.hypot(x - w.x, z - w.z) > 8 + m) &&
     EXTRA_BUILDINGS.every(b => rectDist(x, z, b.x, b.z, b.w / 2 + 1, b.d / 2 + 1) > m + 1) &&
     MOB_SPAWNS.every(p => Math.hypot(x - p.x, z - p.z) > 4) &&
+    Math.hypot(x - DRAGON_LAIR.x, z - DRAGON_LAIR.z) > DRAGON_LAIR.r + m &&
+    Object.values(MOB_ZONES).every(c => Math.hypot(x - c.x, z - c.z) > c.r * 0.85 + m) &&
     // caminos fuera de las puertas
     !(Math.abs(z) < ROAD_W / 2 + m && Math.abs(x) > CITY_R - 2) && !(Math.abs(x) < ROAD_W / 2 + m && z > CITY_R - 2);
   for (let i = 0, n = 0; i < 16000 && n < 2400; i++) {
@@ -444,7 +462,6 @@ export const COLLIDERS: Collider[] = (() => {
   const towerH = (t: { r: number; h: number }) => t.h + t.r * 2.4 + 5;
   add(9, { x: FOUNTAIN.x, z: FOUNTAIN.z, r: FOUNTAIN.r });
 
-  add(0.4, { x: LAKE.x, z: LAKE.z, r: LAKE.r + 0.5 }); // el agua solo frena a quien va a pie
   for (const b of BUILDINGS) {
     if (b.kind === "cathedral") continue;
     if (!isEnterable(b)) { add(b.h + 7, { x: b.x, z: b.z, hw: b.w / 2, hd: b.d / 2 }); continue; }

@@ -1,5 +1,5 @@
 import {
-  BUFFS, EMOTES, WORLD_EVENTS, START_SKILLS, equippedSkills, skillKey, skillOptions, canRankUp, freePoints, validSkills, SKILL_SLOTS, type SkillState, RARITIES, baseItem, rollRichness, FLY, GATHER, REST_AFTER_HIT, REST_REGEN, SEATS, SEAT_RANGE, TOWNSFOLK_SEATS, GATHER_NODES, GATHER_TOOL, GATHER_RARE_XP, GATHER_XP, ITEMS, RARE_GATHER, gatherOfJob, gatherTime, rollGather, LOOT_WOLF, MOB, MOB_SPAWNS, MOB_XP, NPCS, PLAYER, QUESTS, SPAWN_POINT, TALK_RANGE, TICK_MS, blessedLook, classOf, clampWorld, dist, inSafeZone, jobOf, jobXpForNext, npcOf, playerStats, questOf, resolveCollisions, skillsOf, MOUNTS, mountOf, MARKET_RANGE, MARKET_RATE_MS, isTradable, passiveOf, stepMover, validLook, xpForNext,
+  BUFFS, EMOTES, WORLD_EVENTS, START_SKILLS, equippedSkills, skillKey, skillOptions, canRankUp, freePoints, validSkills, SKILL_SLOTS, type SkillState, RARITIES, baseItem, rollRichness, FLY, GATHER, REST_AFTER_HIT, REST_REGEN, SEATS, SEAT_RANGE, TOWNSFOLK_SEATS, GATHER_NODES, GATHER_TOOL, GATHER_RARE_XP, GATHER_XP, ITEMS, RARE_GATHER, gatherOfJob, gatherTime, rollGather, MOB, MOB_IDS, MOB_SPAWN_POINTS, mobOf, type MobId, NPCS, PLAYER, QUESTS, SPAWN_POINT, TALK_RANGE, TICK_MS, blessedLook, classOf, clampWorld, dist, inSafeZone, jobOf, jobXpForNext, npcOf, playerStats, questOf, resolveCollisions, skillsOf, MOUNTS, mountOf, SWIM, inWater, LAKE, MARKET_RANGE, DRAGON, DRAGON_LAIR, type MountId, MARKET_RATE_MS, isTradable, passiveOf, stepMover, validLook, xpForNext,
 } from "@mmorpg/shared";
 import type { CharStore } from "./store";
 import { Auth, type AuthResult } from "./auth";
@@ -9,7 +9,8 @@ import type { BuffId, GatherKind, Pose, WorldEventId, ClientMsg, EntityState, Eq
 
 interface Ent extends Mover {
   id: number;
-  kind: "player" | "mob";
+  kind: "player" | "mob" | "boss";
+  mob?: MobId; // tipo de criatura (solo kind "mob")
   name: string;
   level: number;
   hp: number;
@@ -44,6 +45,7 @@ interface Ent extends Mover {
   lastInput: number; // tick
   lastJump: number; // tick
   ry: number; // orientación
+  swim: boolean; // nadando en el lago
   fly: boolean; y: number; iy: number; // escoba: montado, altura y entrada vertical
   regenAcc: number; // vida regenerada pendiente (fracción de punto)
   gather: { kind: GatherKind; node?: number; corpse?: number; left: number; x: number; z: number } | null; // faena en curso
@@ -51,6 +53,8 @@ interface Ent extends Mover {
   pose: Pose | null; seat: number | null; poseRy: number; // descansando (banco, suelo o tumbado)
   lastHit: number; // tick del último golpe recibido (descansar solo cura fuera de combate)
   restAcc: number; // vida recuperada descansando pendiente (fracción de punto)
+  mounts: MountId[]; mountSel: MountId | null; // monturas ganadas (el dragón) y la elegida (null: la de la clase)
+  breathCd: number; // jefe: seg hasta el próximo aliento de fuego
 }
 
 const INPUT_TIMEOUT_TICKS = 10; // si el cliente deja de enviar entrada, se detiene
@@ -74,7 +78,7 @@ export class Zone {
   constructor(private send: (id: number, msg: ServerMsg) => void, private store: CharStore, private requireAuth = false) {
     this.auth = new Auth(store);
     if (requireAuth) void this.auth.ensureAdmin(); // primera vez: cuenta "admin"
-    MOB_SPAWNS.slice(0, MOB.count).forEach((p, i) => this.spawn("mob", `Lobo ${i + 1}`, p.x, p.z, MOB.maxHp));
+    for (const id of MOB_IDS) for (const p of MOB_SPAWN_POINTS[id]) this.spawnMob(id, p.x, p.z);
     this.market = new MarketBook(store, {
       online: name => { for (const e of this.ents.values()) if (e.kind === "player" && e.persistent && e.name === name) return e; return undefined; },
       send: (id, m) => this.send(id, m),
@@ -84,13 +88,19 @@ export class Zone {
     });
   }
 
-  private spawn(kind: "player" | "mob", name: string, x: number, z: number, maxHp: number): Ent {
+  /** Criatura de un tipo de mobs.ts con sus cifras. */
+  private spawnMob(id: MobId, x: number, z: number, name?: string): Ent {
+    const d = mobOf(id), e = this.spawn("mob", name ?? d.name, x, z, d.hp);
+    e.mob = id; e.level = d.level; e.dmg = d.damage;
+    return e;
+  }
+  private spawn(kind: Ent["kind"], name: string, x: number, z: number, maxHp: number): Ent {
     const e: Ent = {
       id: this.nextId++, kind, name, level: 1, x, z, tx: x, tz: z, hp: maxHp, maxHp,
       dmg: kind === "mob" ? MOB.damage : PLAYER.damage, defense: 0,
       dead: false, respawnAt: 0, cooldownLeft: 0, target: null, spawnX: x, spawnZ: z,
       xp: 0, coins: 0, inv: {}, equip: {}, skillCd: [0, 0, 0, 0], skills: START_SKILLS(), account: null, authBusy: false, acc: null, lastAuthMs: 0, stun: 0, sel: null, quest: "guild", questCount: 0, completedQuests: [], jobLevel: 1, jobXp: 0, buff: null, buffLeft: 0, named: false, persistent: false,
-      ix: 0, iz: 0, lastInput: 0, lastJump: -100, ry: 0, fly: false, y: 0, iy: 0, regenAcc: 0, gather: null, skinned: false, pose: null, seat: null, poseRy: 0, lastHit: -1e9, restAcc: 0,
+      ix: 0, iz: 0, lastInput: 0, lastJump: -100, ry: 0, swim: false, fly: false, y: 0, iy: 0, regenAcc: 0, gather: null, skinned: false, pose: null, seat: null, poseRy: 0, lastHit: -1e9, restAcc: 0, mounts: [], mountSel: null, breathCd: DRAGON.breath.every,
     };
     this.ents.set(e.id, e);
     return e;
@@ -130,11 +140,13 @@ export class Zone {
       t: "inv", inv: e.inv, equip: e.equip, level: e.level, xp: e.xp, xpNext: xpForNext(e.level),
       quest: e.quest, questCount: e.questCount, completedQuests: e.completedQuests,
       job: e.job, jobLevel: e.jobLevel, jobXp: e.jobXp, jobXpNext: jobXpForNext(e.jobLevel), coins: e.coins,
-      skills: e.skills, skillPoints: freePoints(e.level, e.skills),
+      skills: e.skills, skillPoints: freePoints(e.level, e.skills), mounts: e.mounts, mount: e.mountSel,
     });
   }
+  /** Montura con la que va: la ganada que haya elegido o, si no, la de su clase. */
+  private mountFor(e: Ent): MountId { return e.mountSel && e.mounts.includes(e.mountSel) ? e.mountSel : mountOf(e.look); }
   private save(e: Ent) {
-    if (e.kind === "player" && e.persistent) this.store.save(e.name, { level: e.level, xp: e.xp, inv: e.inv, equip: e.equip, look: e.look, quest: e.quest, questCount: e.questCount, completedQuests: e.completedQuests, job: e.job, jobLevel: e.jobLevel, jobXp: e.jobXp, coins: e.coins, skillRanks: e.skills, account: e.account });
+    if (e.kind === "player" && e.persistent) this.store.save(e.name, { level: e.level, xp: e.xp, inv: e.inv, equip: e.equip, look: e.look, quest: e.quest, questCount: e.questCount, completedQuests: e.completedQuests, job: e.job, jobLevel: e.jobLevel, jobXp: e.jobXp, coins: e.coins, skillRanks: e.skills, account: e.account, mounts: { have: e.mounts, sel: e.mountSel } });
   }
   private addItem(e: Ent, item: string, qty: number) { e.inv[item] = (e.inv[item] ?? 0) + qty; }
   private takeItem(e: Ent, item: string): boolean {
@@ -160,14 +172,82 @@ export class Zone {
   private setEvent(id: WorldEventId, minutes: number) {
     if (minutes > 0) this.worldEvents.set(id, Date.now() + minutes * 60_000); else this.worldEvents.delete(id);
     if (id === "wolfmoon") this.syncWolfMoon();
+    if (id === "dragon") this.syncDragon();
     this.broadcast(this.worldMsg());
   }
   /** Luna de lobos: otra manada en los mismos puntos de salida mientras dure. */
   private syncWolfMoon() {
     const on = this.eventOn("wolfmoon");
-    if (on && !this.wolfMoonIds.length) MOB_SPAWNS.slice(0, MOB.count).forEach((s, i) => this.wolfMoonIds.push(this.spawn("mob", `Lobo de la luna ${i + 1}`, s.x + 3, s.z + 3, MOB.maxHp).id));
+    if (on && !this.wolfMoonIds.length) for (const s of MOB_SPAWN_POINTS.wolf) this.wolfMoonIds.push(this.spawnMob("wolf", s.x + 3, s.z + 3, "Lobo de la luna").id);
     if (!on && this.wolfMoonIds.length) { for (const id of this.wolfMoonIds) { this.ents.delete(id); for (const o of this.ents.values()) if (o.target === id) o.target = null; } this.wolfMoonIds = []; }
   }
+  // ---- Jefe dragón ----
+  private dragonId: number | null = null;
+  private dragonDmg = new Map<string, number>(); // daño hecho por cada jugador (por nombre: sobrevive a reconexiones)
+  private dragonGoneAt = 0; // tick en que desaparece el cadáver
+  /** Aparece al empezar el evento "dragon" y se va al terminar (si nadie lo mató antes). */
+  private syncDragon() {
+    const on = this.eventOn("dragon");
+    if (on && this.dragonId === null) {
+      const d = this.spawn("boss", DRAGON.name, DRAGON_LAIR.x, DRAGON_LAIR.z, DRAGON.maxHp);
+      d.level = DRAGON.level; d.dmg = DRAGON.damage; d.ry = Math.PI * 0.25; // mira hacia la ciudad
+      this.dragonId = d.id; this.dragonDmg.clear(); this.dragonGoneAt = 0; // (el aviso lo da el propio evento)
+    }
+    if (!on && this.dragonId !== null) this.removeDragon();
+  }
+  private removeDragon() {
+    const id = this.dragonId; if (id === null) return;
+    this.ents.delete(id); for (const o of this.ents.values()) { if (o.target === id) o.target = null; if (o.sel === id) o.sel = null; }
+    this.dragonId = null; this.dragonDmg.clear(); this.dragonGoneAt = 0;
+  }
+  /** Muerte del dragón: experiencia a todos los que lucharon y la montura a quien hizo una parte del daño. */
+  private dragonSlain(d: Ent) {
+    const total = [...this.dragonDmg.values()].reduce((a, b) => a + b, 0) || 1;
+    const names: string[] = [];
+    for (const [name, dmg] of this.dragonDmg) {
+      const p = [...this.ents.values()].find(e => e.kind === "player" && e.persistent && e.name === name);
+      if (!p) continue; // desconectado: se lo pierde
+      names.push(name);
+      this.gainXp(p, DRAGON.xp);
+      if (dmg / total >= DRAGON.minShare && !p.mounts.includes("dragon")) {
+        p.mounts.push("dragon"); p.mountSel = "dragon";
+        this.events.push({ e: "note", to: p.id, text: "¡Has domado a Vermithrax! Ahora es tu montura: pulsa R para volar con él (elige montura en el inventario)." });
+      }
+      this.sendInv(p); this.save(p);
+    }
+    this.events.push({ e: "announce", text: names.length ? `¡Vermithrax ha caído! Lo derrotaron: ${names.join(", ")}.` : "¡Vermithrax ha caído!" });
+    this.dragonGoneAt = this.tick + Math.round(DRAGON.despawnSec / DT);
+    d.respawnAt = Number.MAX_SAFE_INTEGER; // el jefe no reaparece solo
+  }
+  /** Aliento de fuego: cono delante del dragón que daña a todos los que pille. */
+  private breath(d: Ent) {
+    const b = DRAGON.breath;
+    this.events.push({ e: "breath", id: d.id, ry: d.ry });
+    for (const t of [...this.ents.values()]) {
+      if (t.kind !== "player" || !this.hostile(d, t)) continue;
+      const dx = t.x - d.x, dz = t.z - d.z, r = Math.hypot(dx, dz);
+      if (r > b.range + 1) continue;
+      const off = Math.abs(Math.atan2(Math.sin(Math.atan2(dx, dz) - d.ry), Math.cos(Math.atan2(dx, dz) - d.ry)));
+      if (r < DRAGON.radius + 1 || off <= b.halfAngle) this.damage(d, t, b.mult, 0, true);
+    }
+  }
+  /** IA del dragón: persigue al jugador más cercano sin alejarse de la guarida; sin nadie, vuelve y se cura. */
+  private stepDragon(d: Ent) {
+    const cur = d.target !== null ? this.ents.get(d.target) : undefined;
+    const far = dist(d.x, d.z, DRAGON_LAIR.x, DRAGON_LAIR.z) > DRAGON.leash;
+    if (!cur || cur.dead || cur.fly || inSafeZone(cur.x, cur.z) || far) {
+      d.target = null;
+      const n = far ? null : this.nearestPlayer(d, DRAGON.aggro);
+      if (n) d.target = n.id;
+      else { d.tx = DRAGON_LAIR.x; d.tz = DRAGON_LAIR.z; if (dist(d.x, d.z, DRAGON_LAIR.x, DRAGON_LAIR.z) < 3 && d.hp < d.maxHp) { d.hp = Math.min(d.maxHp, d.hp + Math.ceil(d.maxHp * 0.05 * DT)); if (d.hp === d.maxHp) this.dragonDmg.clear(); } }
+    }
+    const t = d.target !== null ? this.ents.get(d.target) : undefined;
+    if (t && (d.breathCd -= DT) <= 0 && dist(d.x, d.z, t.x, t.z) <= DRAGON.breath.range) {
+      d.ry = Math.atan2(t.x - d.x, t.z - d.z);
+      this.breath(d); d.breathCd = DRAGON.breath.every; d.cooldownLeft = Math.max(d.cooldownLeft, 1.5); // tras escupir fuego no muerde enseguida
+    }
+  }
+
   private adminState(p: Ent) {
     const online = [...this.ents.values()].filter(e => e.kind === "player" && e.persistent).map(e => ({ name: e.name, user: e.acc?.user ?? "", level: e.level }));
     const accounts = this.store.listAccounts().map(a => ({ user: a.user, email: a.email ?? undefined, note: a.note ?? undefined, status: a.status, role: a.role, created: a.created, lastLogin: a.lastLogin ?? undefined, chars: this.store.listChars(a.id).map(c => c.name) }));
@@ -240,6 +320,9 @@ export class Zone {
     const d = this.store.load(name);
     p.level = d?.level ?? 1; p.xp = d?.xp ?? 0; p.coins = d?.coins ?? 0; p.inv = d?.inv ?? {}; p.equip = d?.equip ?? {}; p.look = d?.look;
     p.skills = validSkills(d?.skillRanks, p.level);
+    const mo = d?.mounts as { have?: unknown; sel?: unknown } | undefined; // monturas ganadas: solo ids válidos
+    p.mounts = Array.isArray(mo?.have) ? (mo.have as unknown[]).filter((m): m is MountId => typeof m === "string" && m in MOUNTS) : [];
+    p.mountSel = typeof mo?.sel === "string" && p.mounts.includes(mo.sel as MountId) ? mo.sel as MountId : null;
     p.quest = d?.quest ?? "guild"; p.questCount = d?.questCount ?? 0; p.completedQuests = d?.completedQuests ?? [];
     p.job = d?.job; p.jobLevel = d?.jobLevel ?? 1; p.jobXp = d?.jobXp ?? 0;
     this.giveTool(p, false); // quien ya tenía oficio de antes de las herramientas la recibe al entrar
@@ -324,14 +407,22 @@ export class Zone {
         p.iy = typeof msg.dy === "number" && Number.isFinite(msg.dy) ? Math.max(-1, Math.min(1, msg.dy)) : 0;
         break;
       }
-      case "mount":
+      case "pickMount": {
         if (!p.persistent || p.dead) return;
+        const id = msg.id === null ? null : typeof msg.id === "string" && p.mounts.includes(msg.id) ? msg.id : undefined;
+        if (id === undefined) return;
+        if (p.fly && p.y > 2.5 && !MOUNTS[id ?? mountOf(p.look)].flies) { this.events.push({ e: "note", to: p.id, text: "Aterriza antes de cambiar a una montura que no vuela." }); return; }
+        p.mountSel = id; this.sendInv(p); this.save(p);
+        break;
+      }
+      case "mount":
+        if (!p.persistent || p.dead || p.swim) return; // en el agua no se monta
         p.fly = msg.on === true;
         if (p.fly) p.target = null; // montado no se combate
         break;
       case "jump":
         // a pie o en montura de tierra (el caballo salta con su jinete); en la escoba, Espacio sube
-        if (!p.persistent || p.dead || (p.fly && MOUNTS[mountOf(p.look)].flies) || this.tick - p.lastJump < JUMP_COOLDOWN_TICKS) return;
+        if (!p.persistent || p.dead || (p.fly && MOUNTS[this.mountFor(p)].flies) || p.swim || this.tick - p.lastJump < JUMP_COOLDOWN_TICKS) return;
         p.lastJump = this.tick;
         this.events.push({ e: "jump", id });
         break;
@@ -342,7 +433,7 @@ export class Zone {
         break;
       case "attack": {
         const t = this.ents.get(msg.target);
-        if (!p.persistent || p.dead || p.fly || !t || t.id === p.id || t.dead || t.fly) return;
+        if (!p.persistent || p.dead || p.fly || p.swim || !t || t.id === p.id || t.dead || t.fly) return;
         if (inSafeZone(p.x, p.z) || inSafeZone(t.x, t.z)) return; // ciudad: sin combate
         p.target = t.id; p.sel = t.id;
         break;
@@ -351,7 +442,7 @@ export class Zone {
         const slot = Number(msg.slot), eq = Number.isInteger(slot) ? equippedSkills(p.look, p.skills)[slot] : undefined;
         if (!eq || eq.rank < 1) return; // la definitiva (y cualquier habilidad) hay que aprenderla
         const sk = eq.sk;
-        if (!p.persistent || p.dead || p.fly || p.stun > 0 || p.skillCd[slot]! > 0) return;
+        if (!p.persistent || p.dead || p.fly || p.swim || p.stun > 0 || p.skillCd[slot]! > 0) return;
         const to = this.cast(p, sk);
         if (to === false) return; // sin objetivo válido: no gasta el enfriamiento
         p.gather = null; // combatir interrumpe la faena
@@ -503,7 +594,7 @@ export class Zone {
   // ---- Combate ----
   /** A quién puede dañar `p` ahora mismo (fuera de la ciudad, en el suelo, vivo). */
   private hostile(p: Ent, t: Ent | undefined): t is Ent {
-    return !!t && t !== p && !t.dead && !t.fly && t.y <= 2.5 && (t.kind === "mob" || t.persistent) && !inSafeZone(t.x, t.z);
+    return !!t && t !== p && !t.dead && !t.fly && t.y <= 2.5 && (t.kind !== "player" || t.persistent) && !inSafeZone(t.x, t.z);
   }
   /** Ejecuta una habilidad. Devuelve el id del objetivo, null si no tiene, o false si no se pudo lanzar. */
   private cast(p: Ent, sk: SkillDef): number | null | false {
@@ -537,7 +628,7 @@ export class Zone {
     if (!inReach(t)) t = p.target !== null ? this.ents.get(p.target) : undefined;
     if (!inReach(t)) {
       t = undefined; let bd = range;
-      for (const o of this.ents.values()) { const d = dist(p.x, p.z, o.x, o.z); if (o.kind === "mob" && this.hostile(p, o) && d <= bd) { bd = d; t = o; } }
+      for (const o of this.ents.values()) { const d = dist(p.x, p.z, o.x, o.z); if (o.kind !== "player" && this.hostile(p, o) && d <= bd) { bd = d; t = o; } }
     }
     if (!t) return false;
     const d = dist(p.x, p.z, t.x, t.z);
@@ -557,7 +648,8 @@ export class Zone {
     if (inSafeZone(from.x, from.z) || inSafeZone(to.x, to.z)) { from.target = null; return; }
     if (from.fly || to.fly || to.y > 2.5) { from.target = null; return; } // fuera del alcance: en el aire
     const pa = from.kind === "player" ? passiveOf(from.look) : undefined, pd = to.kind === "player" ? passiveOf(to.look) : undefined;
-    if (to.kind === "mob" && to.target === null) to.target = from.id; // el golpeado responde
+    if (to.kind !== "player" && to.target === null) to.target = from.id; // el golpeado responde
+    if (to.kind === "boss" && from.kind === "player") this.dragonDmg.set(from.name, (this.dragonDmg.get(from.name) ?? 0) + Math.min(to.hp, Math.max(1, from.dmg * mult)));
     to.lastHit = this.tick; if (to.pose) this.standUp(to); // un golpe interrumpe el descanso
     if (pd?.block && Math.random() < pd.block) { this.events.push({ e: "hit", from: from.id, to: to.id, dmg: 0, sk: skill || undefined, block: true }); return; }
     const crit = !!pa?.crit && Math.random() < pa.crit;
@@ -573,9 +665,10 @@ export class Zone {
     if (pa?.killHeal) this.healBy(from, from.maxHp * pa.killHeal);
     to.dead = true; this.standUp(to);
     to.target = null;
-    to.respawnAt = this.tick + Math.round((to.kind === "player" ? PLAYER.respawnSec : MOB.respawnSec) / DT);
+    to.respawnAt = this.tick + Math.round((to.kind === "player" ? PLAYER.respawnSec : mobOf(to.mob).respawnSec) / DT);
     this.events.push({ e: "death", id: to.id, killer: from.id });
-    if (to.kind === "mob" && from.kind === "player") this.reward(from);
+    if (to.kind === "mob" && from.kind === "player") this.reward(from, to.mob ?? "wolf");
+    if (to.kind === "boss") this.dragonSlain(to);
   }
 
   /** Cura (redondeando) y avisa a los clientes. */
@@ -584,16 +677,17 @@ export class Zone {
     if (n > 0 && !e.dead) { e.hp += n; this.events.push({ e: "heal", id: e.id, amount: n }); }
   }
 
-  private reward(p: Ent) {
-    for (const l of LOOT_WOLF) {
+  private reward(p: Ent, id: MobId) {
+    const def = mobOf(id);
+    for (const l of def.loot) {
       if (Math.random() >= l.chance) continue;
       const qty = l.min + Math.floor(Math.random() * (l.max - l.min + 1));
       this.addItem(p, l.item, qty);
       this.events.push({ e: "loot", to: p.id, item: l.item, qty });
       this.progressCollect(p, l.item, qty);
     }
-    this.gainXp(p, MOB_XP);
-    this.progressKill(p, "wolf");
+    this.gainXp(p, def.xp);
+    this.progressKill(p, id);
     this.sendInv(p);
     this.save(p);
   }
@@ -602,7 +696,7 @@ export class Zone {
   /** Asiento ocupado: id del asiento -> id del jugador. */
   private seated = new Map<number, number>();
   private sit(p: Ent, seatId: number) {
-    if (!p.persistent || p.dead || p.fly || p.stun > 0) return;
+    if (!p.persistent || p.dead || p.fly || p.swim || p.stun > 0) return;
     const s = SEATS[seatId];
     if (!s || !Number.isInteger(seatId)) return;
     if (dist(p.x, p.z, s.x, s.z) > SEAT_RANGE) return;
@@ -631,7 +725,7 @@ export class Zone {
     const em = EMOTES[cmd];
     if (!em) { this.note(p, "Gestos: " + Object.keys(EMOTES).join(", ")); return; }
     if (em.pose) {
-      if (p.fly || p.gather) return;
+      if (p.fly || p.swim || p.gather) return;
       this.standUp(p);
       p.target = null; p.ix = p.iz = 0; p.tx = p.x; p.tz = p.z; p.poseRy = p.ry; p.pose = em.pose;
     }
@@ -663,7 +757,7 @@ export class Zone {
     if (tell) this.note(p, `El maestro del gremio te entrega tu herramienta: ${ITEMS[tool]?.name ?? tool}. Sin ella no podrás trabajar.`);
   }
   private startGather(p: Ent, nodeId?: number, corpseId?: number) {
-    if (!p.persistent || p.dead || p.fly || p.stun > 0 || p.gather) return;
+    if (!p.persistent || p.dead || p.fly || p.swim || p.stun > 0 || p.gather) return;
     const kind = gatherOfJob(p.job);
     if (!kind) { this.note(p, "Necesitas un oficio. Habla con el maestro del gremio."); return; }
     const def = GATHER[kind], tool = GATHER_TOOL[kind];
@@ -672,6 +766,7 @@ export class Zone {
     if (kind === "skin") {
       const c = corpseId !== undefined ? this.ents.get(Number(corpseId)) : undefined;
       if (!c || c.kind !== "mob" || !c.dead) return;
+      if (!mobOf(c.mob).skin) { this.note(p, `${mobOf(c.mob).name}: no tiene piel que desollar.`); return; }
       if (c.skinned) { this.note(p, def.empty); return; }
       x = c.x; z = c.z;
     } else {
@@ -692,7 +787,7 @@ export class Zone {
     const moved = Math.hypot(p.x - g.x, p.z - g.z) > 0.3 || p.ix !== 0 || p.iz !== 0;
     const corpse = g.corpse !== undefined ? this.ents.get(g.corpse) : undefined;
     const gone = g.kind === "skin" ? !corpse || !corpse.dead || corpse.skinned : this.nodeUp[g.node!]! > this.tick;
-    if (p.dead || p.fly || p.stun > 0 || p.target !== null || moved || gone) { p.gather = null; return; }
+    if (p.dead || p.fly || p.swim || p.stun > 0 || p.target !== null || moved || gone) { p.gather = null; return; }
     if ((g.left -= DT) > 0) return;
     p.gather = null;
     const rich = g.kind === "skin" ? 0 : this.nodeRich[g.node!] ?? 0;
@@ -797,7 +892,7 @@ export class Zone {
   private nearestPlayer(m: Ent, maxD: number): Ent | null {
     let best: Ent | null = null, bd = maxD;
     for (const e of this.ents.values()) {
-      if (e.kind !== "player" || !e.persistent || e.dead || e.fly || e.y > 2.5 || inSafeZone(e.x, e.z)) continue;
+      if (e.kind !== "player" || !e.persistent || e.dead || e.fly || e.swim || e.y > 2.5 || inSafeZone(e.x, e.z)) continue;
       const d = dist(m.x, m.z, e.x, e.z);
       if (d < bd) { bd = d; best = e; }
     }
@@ -814,10 +909,12 @@ export class Zone {
       for (const e of this.ents.values()) if (e.kind === "player" && e.persistent && dist(e.x, e.z, au.x, au.z) <= 40) this.send(e.id, board);
     }
 
+    if (this.dragonGoneAt && this.tick >= this.dragonGoneAt) { this.removeDragon(); this.setEvent("dragon", 0); }
     for (const e of this.ents.values()) {
       if (e.dead) {
+        if (e.kind === "boss") continue; // el cadáver del dragón se queda hasta que se retira (abajo)
         if (this.tick >= e.respawnAt) {
-          e.dead = false; e.hp = e.maxHp; e.target = null; e.fly = false; e.y = 0; e.stun = 0; e.buff = null; e.skinned = false; e.gather = null;
+          e.dead = false; e.hp = e.maxHp; e.target = null; e.fly = false; e.swim = false; e.y = 0; e.stun = 0; e.buff = null; e.skinned = false; e.gather = null;
           e.x = e.tx = e.kind === "player" ? SPAWN_POINT.x : e.spawnX;
           e.z = e.tz = e.kind === "player" ? SPAWN_POINT.z : e.spawnZ;
         }
@@ -833,25 +930,35 @@ export class Zone {
       }
       if (e.stun > 0) { e.stun -= DT; e.tx = e.x; e.tz = e.z; continue; } // aturdido: ni se mueve ni ataca
       if (e.pose && this.stepRest(e)) continue; // descansando: quieto (y sin colisiones: está sobre el banco)
-      const stats = e.kind === "player" ? PLAYER : MOB;
-      const range = e.kind === "player" ? (e.look && classOf(e.look[0])?.range) || PLAYER.range : MOB.range; // el mago ataca de lejos
+      const stats = e.kind === "player" ? PLAYER : e.kind === "boss" ? DRAGON : mobOf(e.mob);
+      const md = e.kind === "mob" ? mobOf(e.mob) : undefined;
+      const range = e.kind === "player" ? (e.look && classOf(e.look[0])?.range) || PLAYER.range : e.kind === "boss" ? DRAGON.range : md!.range; // el mago ataca de lejos
+      if (e.kind === "boss") this.stepDragon(e);
 
       // IA del mob: elegir objetivo, soltarlo si se aleja demasiado del spawn.
       if (e.kind === "mob") {
         const cur = e.target !== null ? this.ents.get(e.target) : undefined;
-        if (!cur || cur.dead || inSafeZone(cur.x, cur.z) || dist(e.x, e.z, e.spawnX, e.spawnZ) > MOB.leash) {
+        if (!cur || cur.dead || cur.swim || inSafeZone(cur.x, cur.z) || dist(e.x, e.z, e.spawnX, e.spawnZ) > md!.leash) {
           e.target = null;
-          const n = dist(e.x, e.z, e.spawnX, e.spawnZ) > MOB.leash ? null : this.nearestPlayer(e, MOB.aggro * (this.eventOn("wolfmoon") ? 1.6 : 1));
+          const n = dist(e.x, e.z, e.spawnX, e.spawnZ) > md!.leash ? null : this.nearestPlayer(e, md!.aggro * (e.mob === "wolf" && this.eventOn("wolfmoon") ? 1.6 : 1));
           if (n) e.target = n.id;
           else { e.tx = e.spawnX; e.tz = e.spawnZ; }
         }
       }
 
       if (e.kind === "player" && this.tick - e.lastInput > INPUT_TIMEOUT_TICKS) { e.ix = 0; e.iz = 0; e.iy = 0; }
-      const mount = e.fly ? MOUNTS[mountOf(e.look)] : undefined; // solo la escoba vuela
+      if (e.kind === "player") { // nadar: en el agua, a pie y sin volar; una montura de tierra se queda en la orilla
+        const sw = !e.dead && inWater(e.x, e.z) && e.y <= 0.5 && !(e.fly && MOUNTS[this.mountFor(e)].flies);
+        if (sw && !e.swim) {
+          if (e.fly) { e.fly = false; this.note(e, "Desmontas: tu montura no sabe nadar."); }
+          e.target = null; e.gather = null; if (e.pose) this.standUp(e);
+        }
+        e.swim = sw;
+      }
+      const mount = e.fly ? MOUNTS[this.mountFor(e)] : undefined; // vuelan la escoba y el dragón
       if (mount?.flies) e.y = Math.max(FLY.minY, Math.min(FLY.maxY, e.y + e.iy * FLY.vSpeed * DT));
       else if (e.y > 0) e.y = Math.max(0, e.y - FLY.fallSpeed * DT); // al desmontar (o en montura de tierra), cae
-      const speed = stats.speed * (mount ? mount.speedMult : passive?.speed ?? 1);
+      const speed = stats.speed * (mount ? mount.speedMult : passive?.speed ?? 1) * (e.swim ? SWIM.speedMult : 1);
       const manual = e.ix !== 0 || e.iz !== 0; // con WASD el jugador manda; sin entrada persigue a su objetivo
       const tgt = e.target !== null ? this.ents.get(e.target) : undefined;
       if (tgt && !tgt.dead) {
@@ -868,18 +975,23 @@ export class Zone {
         e.tx = e.x; e.tz = e.z;
       } else {
         const ox = e.x, oz = e.z;
-        stepMover(e, stats.speed, DT);
+        stepMover(e, stats.speed * (e.swim ? SWIM.speedMult : 1), DT);
         if (Math.hypot(e.x - ox, e.z - oz) > 1e-4) e.ry = Math.atan2(e.x - ox, e.z - oz);
       }
-      [e.x, e.z] = resolveCollisions(e.x, e.z, e.kind === "player" ? 0.4 : 0.6, e.y);
+      if (e.kind !== "boss") [e.x, e.z] = resolveCollisions(e.x, e.z, e.kind === "player" ? 0.4 : mobOf(e.mob).radius, e.y); // el dragón no choca con árboles
+      if (e.kind === "mob" && inWater(e.x, e.z)) { // las criaturas no entran al agua: se quedan en la orilla
+        const a = Math.atan2(e.z - LAKE.z, e.x - LAKE.x), rr = LAKE.r - SWIM.inset + 0.05;
+        e.x = LAKE.x + Math.cos(a) * rr; e.z = LAKE.z + Math.sin(a) * rr;
+      }
       if (e.gather) this.stepGather(e);
     }
 
     // los jugadores que aún no han elegido nombre no existen para nadie
-    const entities: EntityState[] = [...this.ents.values()].filter(e => e.kind === "mob" || e.persistent).map(e => ({
-      id: e.id, kind: e.kind, name: e.name, level: e.level, x: e.x, z: e.z, ry: Math.round(e.ry * 100) / 100, y: e.y > 0 ? Math.round(e.y * 10) / 10 : undefined, fly: e.fly || undefined, hp: e.hp, maxHp: e.maxHp, dead: e.dead,
+    const entities: EntityState[] = [...this.ents.values()].filter(e => e.kind !== "player" || e.persistent).map(e => ({
+      id: e.id, kind: e.kind, name: e.name, level: e.level, x: e.x, z: e.z, ry: Math.round(e.ry * 100) / 100, y: e.y > 0 ? Math.round(e.y * 10) / 10 : undefined, fly: e.fly || undefined, swim: e.swim || undefined, hp: e.hp, maxHp: e.maxHp, dead: e.dead,
       weapon: e.equip.weapon, armor: e.equip.armor, look: e.look, buff: e.buff ?? undefined, stun: e.stun > 0 || undefined,
       act: e.gather?.kind, skinned: (e.dead && e.skinned) || undefined, pose: e.pose ?? undefined,
+      mount: e.kind === "player" && e.mountSel ? this.mountFor(e) : undefined, mob: e.mob,
     }));
     const down: number[] = [];
     const rich: number[] = [];

@@ -14,11 +14,14 @@ import { createTopbar } from "./ui/topbar";
 import { createAdminPanel } from "./ui/admin";
 import { createWorldBanner } from "./ui/worldEvents";
 import { rayBlockDist } from "@mmorpg/shared";
-import { INTERIOR_ROOMS, CITY_NAME, FLY, GODDESS_STATUE, PRAY_RANGE, ITEMS, MOB_XP, NPCS, PLAYER, QUESTS, TALK_RANGE, classOf, inSafeZone, isBlessed, jobOf, lookColor, MOUNTS, mountOf, npcOf, passiveOf, questOf, resolveCollisions, skillsOf, styleOf } from "@mmorpg/shared";
-import { Wolf } from "./models/wolf";
+import { INTERIOR_ROOMS, CITY_NAME, FLY, GODDESS_STATUE, PRAY_RANGE, ITEMS, mobOf, NPCS, PLAYER, QUESTS, TALK_RANGE, classOf, inSafeZone, isBlessed, jobOf, lookColor, MOUNTS, SWIM, inWater, mountOf, npcOf, passiveOf, questOf, resolveCollisions, skillsOf, styleOf } from "@mmorpg/shared";
+import { createMobModel, type MobModel } from "./models/mobs";
 import { Character, playerLook, preloadCharacters } from "./models/character";
 import { Broom } from "./models/broom";
 import { Steed } from "./models/steed";
+import { Dragon, createLair, preloadDragon } from "./models/dragon";
+import { DragonSaddle } from "./models/dragonSaddle";
+import { createDragonSound, type DragonSrc } from "./world/dragonSound";
 import { buildLobby } from "./world/lobby";
 import { createSky } from "./world/sky";
 import { buildLife } from "./world/life";
@@ -42,6 +45,7 @@ import { createMarket as createMarketWorld } from "./world/market";
 import { createParks } from "./world/parks";
 import { createMountSound } from "./world/mountSound";
 import { createAmbience } from "./world/ambience";
+import { createSwimFx } from "./world/swimFx";
 const minimap = createMinimap();
 
 const $ = (id: string) => document.getElementById(id)!;
@@ -62,8 +66,10 @@ function resize() {
 }
 addEventListener("resize", resize); resize();
 
-void preloadCharacters();
+void preloadCharacters(); void preloadDragon();
+createLair(scene); // guarida del dragón (claro quemado con rocas y huesos)
 const lobby = buildLobby(scene);
+const swimFx = createSwimFx(scene, lobby.lake); lobby.onSplash(swimFx);
 const life = buildLife(scene);
 // Cielo con sol, luna, estrellas y nubes, y ciclo de día y noche (la misma hora para todos).
 const sky = createSky(scene, lobby.lights);
@@ -86,7 +92,7 @@ interface View {
   lag: THREE.Mesh; lagW: number; lagHold: number; // tramo de vida perdido que se vacía con retraso
   stars?: THREE.Group; // aturdido
   bars: THREE.Group;
-  wolf?: Wolf;
+  wolf?: MobModel; // criatura enemiga (lobo, jabalí, araña, bandido, esqueleto o trol)
   player?: Character;
   label?: THREE.Sprite; labelText?: string;
   bubble?: ReturnType<typeof createBubble>; // último mensaje de chat sobre la cabeza
@@ -101,8 +107,14 @@ interface View {
   alt: number; // altura mostrada (vuelo en escoba)
   lean: number; // inclinación al volar
   barsY: number;
-  steed?: Broom | Steed; steedId?: string; // montura actual (se rehace si cambia la clase)
+  dragon?: Dragon; // jefe dragón
+  phase?: number; // jefe: 0 entero · 1 por debajo del 50 % de vida · 2 muerto (ruge al pasar a la siguiente)
+  saddle?: DragonSaddle; // silla y arreos de la montura de dragón
+  dAlt?: number; // montura de dragón: altura a la que volabas (el dragón remonta desde ahí al desmontar)
+  dRoar?: boolean; // ya ha rugido en este montaje
+  steed?: Broom | Steed | Dragon; steedId?: string; // montura actual (se rehace si cambia la clase)
   mount?: number; // 0 a pie · 1 montado (transición animada)
+  sw?: number; // 0 en tierra, 1 nadando (suave): baja etiquetas y barras con el cuerpo hundido
   seatY?: number; // cuánto se eleva el jinete sobre una montura de tierra
   bank?: number; // alabeo al girar volando
 }
@@ -113,6 +125,9 @@ const barBg = new THREE.PlaneGeometry(1.3, 0.22), barFg = new THREE.PlaneGeometr
 barFg.translate(0.6, 0, 0); // ancla a la izquierda para escalar en x
 const barMat = (color: number) => new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true });
 const FOE = 0xd8434f, FRIEND = 0x5fae55;
+const BOSS_SCALE = 0.75, BOSS_HOVER = 2.2, BOSS_BARS_Y = 7.6; // el jefe dragón: tamaño, altura a la que vuela y su barra
+const DRAGON_MOUNT_SCALE = 0.55; // envergadura ~8 m: el jinete va sentado entre los hombros
+const isFoe = (k: EntityState["kind"]) => k === "mob" || k === "boss";
 
 function nameSprite(text: string, color: string) {
   const c = document.createElement("canvas"); c.width = 320; c.height = 56;
@@ -123,14 +138,27 @@ function nameSprite(text: string, color: string) {
   sp.scale.set(2.9, 0.5, 1); sp.renderOrder = 12;
   return sp;
 }
+/** Sonido y polvo del dragón: cada aletazo (grave y, cerca del suelo, un anillo de polvo), rugido y aliento. */
+function wireDragon(d: Dragon, src: () => DragonSrc) {
+  const at = () => { const m = d.group.matrixWorld.elements; return [m[12]!, m[13]!, m[14]!] as const; };
+  d.onWingbeat = k => {
+    const [x, y, z] = at(); dragonSound.play("wing", src(), x, y, z, k);
+    if (y < 4.5 && k > 0.15 && src() !== "other") fx.ring(x, z, (3.2 + 3 * k) * (d.scale / 0.75), 0xbfae8c, 0.6, 0.12); // polvo que levanta el aleteo
+  };
+  d.onRoar = () => { const [x, y, z] = at(); dragonSound.play("roar", src(), x, y + d.seat, z); };
+  d.onBreath = () => { const [x, y, z] = at(); dragonSound.play("breath", src(), x, y + d.seat, z); };
+}
 function upsert(e: EntityState) {
   let v = views.get(e.id);
   if (!v) {
     const group = new THREE.Group();
     const rot = new THREE.Group();
-    let body: THREE.Mesh, wolf: Wolf | undefined, player: Character | undefined;
+    let body: THREE.Mesh, wolf: MobModel | undefined, player: Character | undefined;
+    let dragon: Dragon | undefined;
     if (e.kind === "mob") {
-      wolf = new Wolf(); body = wolf.hitbox; rot.add(wolf.group);
+      wolf = createMobModel(e.mob); body = wolf.hitbox; rot.add(wolf.group);
+    } else if (e.kind === "boss") {
+      dragon = new Dragon(BOSS_SCALE, { shadow: true }); body = dragon.hitbox; rot.add(dragon.group); wireDragon(dragon, () => "boss");
     } else {
       player = new Character(playerLook(e.look, e.weapon), { shadow: true }); body = player.hitbox; rot.add(player.group);
     }
@@ -138,7 +166,8 @@ function upsert(e: EntityState) {
     const bg = new THREE.Mesh(barBg, barMat(0x111a29));
     const lag = new THREE.Mesh(barFg, barMat(0xf5d76a));
     const bar = new THREE.Mesh(barFg, barMat(e.kind === "mob" ? FOE : FRIEND));
-    const bars = new THREE.Group(); bars.position.set(0, e.kind === "mob" ? 1.9 : 2.55, 0);
+    const bars = new THREE.Group(); bars.position.set(0, e.kind === "mob" ? wolf!.height : e.kind === "boss" ? BOSS_BARS_Y : 2.55, 0);
+    if (e.kind === "boss") bars.scale.set(3, 1.6, 1);
     for (const m of [lag, bar]) m.position.x = -0.6;
     lag.position.z = 0.001; bar.position.z = 0.002;
     bg.renderOrder = 10; lag.renderOrder = 11; bar.renderOrder = 12;
@@ -149,7 +178,7 @@ function upsert(e: EntityState) {
     rot.rotation.order = "YXZ"; // primero el rumbo, luego la inclinación
     rot.rotation.y = e.ry;
     scene.add(group);
-    v = { group, rot, body, bar, lag, lagW: e.hp / e.maxHp, lagHold: 0, bars, wolf, player, tx: e.x, tz: e.z, state: e, heading: e.ry, deadFor: 0, jumpT: -1, alt: e.y ?? 0, lean: 0, barsY: bars.position.y };
+    v = { group, rot, body, bar, lag, lagW: e.hp / e.maxHp, lagHold: 0, bars, wolf, player, dragon, tx: e.x, tz: e.z, state: e, heading: e.ry, deadFor: 0, jumpT: -1, alt: e.y ?? 0, lean: 0, barsY: bars.position.y };
     views.set(e.id, v);
     if (e.id === myId) { pred.x = e.x; pred.z = e.z; pred.y = e.y ?? 0; pred.ready = true; flying = !!e.fly; }
   }
@@ -164,6 +193,17 @@ function upsert(e: EntityState) {
     if (v.labelText !== text) {
       v.label?.removeFromParent();
       v.label = nameSprite(text, e.id === myId ? "#9fd0ff" : "#ffffff"); v.label.position.y = 2.9; v.labelText = text;
+      v.group.add(v.label);
+    }
+  }
+  if (v.dragon) {
+    // el jefe ruge al aparecer, al bajar del 50 % de vida y al morir
+    const ph = e.dead ? 2 : e.hp / e.maxHp < 0.5 ? 1 : 0;
+    if (v.phase === undefined) { v.phase = ph; if (ph === 0) setTimeout(() => v!.dragon?.roar(), 400); } else if (ph > v.phase) { v.phase = ph; v.dragon.roar(); }
+    const text = "Nv" + e.level + " " + e.name;
+    if (v.labelText !== text) {
+      v.label?.removeFromParent();
+      v.label = nameSprite(text, "#ff9c6b"); v.label.scale.set(5.8, 1, 1); v.label.position.y = BOSS_BARS_Y + 0.9; v.labelText = text;
       v.group.add(v.label);
     }
   }
@@ -183,10 +223,10 @@ function floatText(id: number, text: string, cls: string) {
   const v = views.get(id); if (!v) return;
   const el = document.createElement("div"); el.className = "dmg " + cls; el.textContent = text;
   document.body.appendChild(el);
-  floats.push({ el, id, x: v.group.position.x, z: v.group.position.z, y: (v.state.kind === "mob" ? 1.7 : 2.4) + v.alt, t: 0, dx: (Math.random() - 0.5) * 50 });
+  floats.push({ el, id, x: v.group.position.x, z: v.group.position.z, y: (v.wolf ? v.wolf.height - 0.2 : 2.4) + v.alt, t: 0, dx: (Math.random() - 0.5) * 50 });
   while (floats.length > 40) floats.shift()!.el.remove();
 }
-const fv3 = new THREE.Vector3();
+const fv3 = new THREE.Vector3(), dragonLook = new THREE.Vector3();
 function updateFloats(dt: number) {
   for (let i = floats.length - 1; i >= 0; i--) {
     const f = floats[i]!; f.t += dt;
@@ -328,7 +368,7 @@ ws.onmessage = ev => {
   if (msg.t !== "snapshot") return;
   const alive = new Set<number>();
   for (const e of msg.entities) { upsert(e); alive.add(e.id); }
-  for (const [id, v] of views) if (!alive.has(id)) { scene.remove(v.group); v.bubble?.dispose(); if (v.line) scene.remove(v.line); if (v.steed instanceof Steed) v.steed.dispose(); views.delete(id); }
+  for (const [id, v] of views) if (!alive.has(id)) { scene.remove(v.group); v.bubble?.dispose(); if (v.line) scene.remove(v.line); if (v.steed instanceof Steed || v.steed instanceof Dragon) v.steed.dispose(); v.saddle?.dispose(); v.dragon?.dispose(); swimFx.forget(id); views.delete(id); }
   gatherNodes.setDown(msg.down); gatherNodes.setRich(msg.rich);
   for (const ev of msg.events) {
     if (ev.e === "hit") {
@@ -343,7 +383,7 @@ ws.onmessage = ev => {
         if (b) fx.ring(b.tx, b.tz, 1.2, 0x9fc4ff, 0.3, 1.1);
         continue;
       }
-      b?.wolf?.hurt(ev.sk || ev.crit); b?.player?.hurt();
+      b?.wolf?.hurt(ev.sk || ev.crit); b?.player?.hurt(); b?.dragon?.flinch();
       if (ev.crit && ev.from !== myId && ev.to !== myId) floatText(ev.to, "¡" + ev.dmg + "!", "other");
       else if (ev.crit && ev.from === myId) { floatText(ev.to, "¡Crítico! " + ev.dmg, "out sk crit"); shake = Math.max(shake, 0.3); }
       else if (ev.to === myId) {
@@ -354,7 +394,7 @@ ws.onmessage = ev => {
       else floatText(ev.to, String(ev.dmg), "other");
     } else if (ev.e === "death") {
       const n = views.get(ev.id)?.state.name ?? "?", k = views.get(ev.killer)?.state.name ?? "?";
-      if (ev.killer === myId && views.get(ev.id)?.state.kind === "mob") floatText(ev.id, "+" + MOB_XP + " XP", "note xp");
+      if (ev.killer === myId && views.get(ev.id)?.state.kind === "mob") floatText(ev.id, "+" + mobOf(views.get(ev.id)?.state.mob).xp + " XP", "note xp");
       if (ev.id === targetId) attacking = false;
       say(`${k} mató a ${n}`, "#f2a08f");
     } else if (ev.e === "loot") {
@@ -375,6 +415,10 @@ ws.onmessage = ev => {
     else if (ev.e === "sold") { if (ev.to === myId) say(`Has vendido ${ev.qty} × ${ITEMS[ev.item]?.name ?? ev.item} por ${fmtCoins(ev.net)}.`, "#a9d99a"); }
     else if (ev.e === "bought") { if (ev.to === myId) say(`Has comprado ${ev.qty} × ${ITEMS[ev.item]?.name ?? ev.item} a ${fmtCoins(ev.price)} c/u. Recógelo en la subasta.`, "#a9d99a"); }
     else if (ev.e === "note") { if (ev.to === myId) say(ev.text, "#f2a08f"); }
+    else if (ev.e === "breath") {
+      const v = views.get(ev.id);
+      if (v?.dragon) { v.heading = ev.ry; v.dragon.breathe(); }
+    }
     else if (ev.e === "announce") { worldBanner.announce(ev.text); say("Aviso: " + ev.text, "#f0cf6a"); }
     else if (ev.e === "emote") {
       const v = views.get(ev.id);
@@ -417,7 +461,7 @@ ws.onmessage = ev => {
 };
 
 // ---- Inventario y ventana de habilidades (K) ----
-const inventory = createInventory(panel, item => send({ t: "equip", item }), slot => send({ t: "unequip", slot }));
+const inventory = createInventory(panel, item => send({ t: "equip", item }), slot => send({ t: "unequip", slot }), id => send({ t: "pickMount", id }));
 const skillWin = createSkillsWindow((slot, opt) => send({ t: "skillUp", slot, opt }), (slot, opt) => send({ t: "skillPick", slot, opt }), () => send({ t: "skillReset" }));
 // barra superior (como en Albion): inventario, habilidades (con los puntos sin gastar) y mapa
 const topbar = createTopbar(code => dispatchEvent(new KeyboardEvent("keydown", { code, key: code.slice(3).toLowerCase() })));
@@ -506,6 +550,7 @@ function setTarget(id: number | null, attack = false, tell = true) {
   if (attack && id !== null) {
     const v = views.get(id), me = views.get(myId);
     if (!v || v.state.kind !== "mob") return;
+    if (swimming) { say("No puedes combatir nadando.", "#f2a08f"); return; }
     if (me && (inSafeZone(me.group.position.x, me.group.position.z) || inSafeZone(v.tx, v.tz))) { say("Dentro de la ciudad no se combate. Sal por una puerta.", "#f2a08f"); return; }
     if (tell) send({ t: "attack", target: id });
     attacking = true;
@@ -564,7 +609,7 @@ function updateBlessedAuras(dt: number, t: number) {
 function cycleTarget() {
   const me = views.get(myId); if (!me) return;
   const px = me.group.position.x, pz = me.group.position.z, fx = Math.sin(cam.yaw), fz = Math.cos(cam.yaw);
-  const list = [...views.values()].filter(v => v.state.kind === "mob" && !v.state.dead && v.group.visible)
+  const list = [...views.values()].filter(v => isFoe(v.state.kind) && !v.state.dead && v.group.visible)
     .map(v => ({ id: v.state.id, d: Math.hypot(v.tx - px, v.tz - pz), front: (v.tx - px) * fx + (v.tz - pz) * fz > -2 }))
     .filter(o => o.d < 40 && o.front).sort((a, b) => a.d - b.d);
   if (!list.length) { say("No hay enemigos cerca.", "#f2a08f"); return; }
@@ -627,6 +672,7 @@ const market = createMarket(send);
 const marketWorld = createMarketWorld(scene); // plaza del mercado y tablón de precios
 const parks = createParks(scene); // parques de los barrios, bancos de la Plaza Mayor y sus vecinos
 const mountSound = createMountSound(); // cascos y viento de tu montura
+const dragonSound = createDragonSound(); // aletazos, rugidos y aliento del dragón (jefe y montura)
 const ambience = createAmbience(); // agua, pájaros, grillos, viento y hojas según dónde estés y la hora
 const goddessDist = () => { const me = views.get(myId); return me ? Math.hypot(me.group.position.x - GODDESS_STATUE.x, me.group.position.z - GODDESS_STATUE.z) : Infinity; };
 // ---- Barrios: rótulo al entrar y nombre en el pendón del minimapa ----
@@ -661,7 +707,7 @@ function gatherTarget(): { kind: GatherKind; node?: number; corpse?: number; ok:
     if (!best || (ok && !best.ok) || (ok === best.ok && d < best.d)) best = { kind, node, corpse, ok, d };
   };
   for (const n of GATHER_NODES) if (!gatherNodes.isDown(n.id)) consider(n.kind, n.x, n.z, n.id);
-  for (const v of views.values()) if (v.state.kind === "mob" && v.state.dead && !v.state.skinned) consider("skin", v.group.position.x, v.group.position.z, undefined, v.state.id);
+  for (const v of views.values()) if (v.state.kind === "mob" && v.state.dead && !v.state.skinned && mobOf(v.state.mob).skin) consider("skin", v.group.position.x, v.group.position.z, undefined, v.state.id);
   return best;
 }
 const JOB_NAMES: Record<GatherKind, string> = { fish: "pescador", ore: "minero", herb: "recolector", skin: "peletero" };
@@ -693,6 +739,7 @@ function interact() {
   if (!joined || !me || me.state.dead || !invState || questUi.open || market.open) return;
   const near = npcs.nearest(me.group.position);
   if (near && near.d <= TALK_RANGE) { talk(near.id); return; }
+  if (swimming) { say("No puedes hacer eso nadando: sal del agua.", "#f2a08f"); return; }
   const seat = freeSeat();
   if (seat) { if (flying) toggleBroom(); keys.clear(); if (targetId !== null) setTarget(null); send({ t: "sit", seat: seat.id }); return; }
   const g = gatherTarget();
@@ -805,6 +852,7 @@ function castSkill(slot: number) {
   const now = performance.now(), deny = (why?: string) => { skillBar.deny(slot); if (why) say(why, "#f2a08f"); };
   if (!skillBar.ready(slot, now)) return deny();
   if (flying) return deny("Baja de la montura (R) para usar habilidades.");
+  if (swimming) return deny("No puedes lanzar habilidades nadando.");
   const hostile = sk.kind === "strike" || sk.kind === "charge" || sk.kind === "aoe";
   const px = me.group.position.x, pz = me.group.position.z;
   if (hostile && inSafeZone(px, pz)) return deny("Dentro de la ciudad no se combate. Sal por una puerta.");
@@ -845,18 +893,19 @@ function onCast(id: number, slot: number, k?: string, to?: number) {
 const JUMP_V = 7.5, GRAVITY = 22, JUMP_TIME = (2 * JUMP_V) / GRAVITY;
 function jump() {
   const me = views.get(myId);
-  if (!joined || !me || me.state.dead || me.jumpT >= 0) return;
+  if (!joined || !me || me.state.dead || me.jumpT >= 0 || swimming) return;
   me.jumpT = 0; me.player?.jump();
   send({ t: "jump" });
 }
 
 // Montura (R): el servidor valida el estado, la altura y la velocidad. `flying` = montado; solo la escoba sube.
-let flying = false;
-const myMount = () => MOUNTS[mountOf(views.get(myId)?.state.look)];
+let flying = false, swimming = false; // swimming: en el agua (misma regla que el servidor: inWater)
+const mountIdOf = (st?: EntityState) => st?.mount ?? mountOf(st?.look); // la ganada (el dragón) o la de la clase
+const myMount = () => MOUNTS[mountIdOf(views.get(myId)?.state)];
 const airborne = () => flying && myMount().flies;
 function toggleBroom() {
   const me = views.get(myId);
-  if (!joined || !me || me.state.dead) return;
+  if (!joined || !me || me.state.dead || swimming) return;
   flying = !flying;
   if (flying) { me.jumpT = -1; if (myMount().flies) pred.y = Math.max(pred.y, 0.2); }
   send({ t: "mount", on: flying });
@@ -890,8 +939,10 @@ function control(dt: number, me: View, now: number) {
   const moving = len > 0;
   if (moving) charYaw = Math.atan2(fx * fwd + rx * side, fz * fwd + rz * side); // el personaje mira hacia donde se mueve
 
+  swimming = pred.ready && !me.state.dead && !(flying && myMount().flies) && pred.y <= 0.5 && !me.state.pose && inWater(pred.x, pred.z);
+  if (swimming && flying) flying = false; // la montura de tierra se queda en la orilla
   if (pred.ready) {
-    const speed = PLAYER.speed * (flying ? myMount().speedMult : passiveOf(me.state.look)?.speed ?? 1);
+    const speed = PLAYER.speed * (flying ? myMount().speedMult : passiveOf(me.state.look)?.speed ?? 1) * (swimming ? SWIM.speedMult : 1);
     pred.x += dx * speed * dt; pred.z += dz * speed * dt;
     if (airborne()) pred.y = Math.max(FLY.minY, Math.min(FLY.maxY, pred.y + dy * FLY.vSpeed * dt));
     else pred.y = Math.max(0, pred.y - FLY.fallSpeed * dt);
@@ -929,6 +980,12 @@ function frame() {
     if (v === me && v.state.pose && !moving) charYaw = v.state.ry; // sentado: mira hacia donde mira el banco
     if (!v.state.dead) v.heading = v === me ? charYaw : v.state.ry;
     v.player?.setPose(v.state.dead ? null : v.state.pose ?? null);
+    const sw = v.player ? (v === me ? swimming : !!v.state.swim) && !v.state.dead : false;
+    if (v.player) {
+      v.player.setSwimming(sw); v.sw = (v.sw ?? 0) + ((sw ? 1 : 0) - (v.sw ?? 0)) * Math.min(1, dt * 4);
+      swimFx.track(v.state.id, v.group.position.x, v.group.position.z, speed, sw, dt, camera.position.distanceTo(v.group.position));
+      swimFx.collar(v.state.id, v.group.position.x, v.group.position.z, sw, speed, t);
+    }
     const turn = angDiff(v.rot.rotation.y, v.heading);
     v.rot.rotation.y += turn * Math.min(1, dt * 14);
     // altura: vuelo en escoba (o caída al desmontar) más el arco del salto
@@ -945,8 +1002,9 @@ function frame() {
       else hop = JUMP_V * v.jumpT - 0.5 * GRAVITY * v.jumpT * v.jumpT;
     }
     v.rot.position.y = v.alt + hop;
-    v.bars.position.y = v.barsY + v.alt + (v.seatY ?? 0);
-    if (v.label) v.label.position.y = 2.9 + v.alt + (v.seatY ?? 0);
+    const wd = (v.sw ?? 0) * 1.1;
+    v.bars.position.y = v.barsY + v.alt + (v.seatY ?? 0) - wd;
+    if (v.label && !v.dragon) v.label.position.y = 2.9 + v.alt + (v.seatY ?? 0) - wd;
     // faena: repetir su animación y, al pescar, tender el sedal hasta el banco de peces más cercano
     const act = v.state.act;
     if (act && v.player && !v.state.dead) {
@@ -964,23 +1022,25 @@ function frame() {
     if (v.bubble?.visible) {
       // se ve a través de paredes: solo de cerca, para no llenar la pantalla de bocadillos lejanos
       v.bubble.update(dt, camera.position.distanceTo(v.group.position) < 45);
-      v.bubble.sprite.position.y = 3.2 + v.alt + (v.seatY ?? 0);
+      v.bubble.sprite.position.y = 3.2 + v.alt + (v.seatY ?? 0) - wd;
     }
     if (v.player) {
       // Montar. Escoba: llega girando desde atrás y el personaje salta sobre ella; al bajar sale disparada.
       // Caballo, cabra o pantera: aparece de un salto bajo el jinete con una nube de polvo y al bajar se desvanece.
-      const mid = mountOf(v.state.look), air = MOUNTS[mid].flies, mPrev = v.mount ?? (fly ? 1 : 0);
-      const m = Math.max(0, Math.min(1, mPrev + (fly ? dt / (air ? 0.65 : 0.45) : -dt / 0.4)));
+      const mid = mountIdOf(v.state), air = MOUNTS[mid].flies, mPrev = v.mount ?? (fly ? 1 : 0);
+      const dragonMount = mid === "dragon"; // el dragón tarda más: baja en picado al montar y remonta al desmontar
+      const m = Math.max(0, Math.min(1, mPrev + (fly ? dt / (dragonMount ? 1.7 : air ? 0.65 : 0.45) : -dt / (dragonMount ? 1.4 : 0.4))));
       v.mount = m;
       if (fly && mPrev === 0 && !air) { fx.ring(v.group.position.x, v.group.position.z, 2.2, 0xcbb894, 0.5); fx.ring(v.group.position.x, v.group.position.z, 1.3, 0xefe6d0, 0.4, 0.14, 0.08); }
       // velocidad de giro suavizada (positiva a la izquierda)
       const dh = v.prevHeading === undefined ? 0 : angDiff(v.prevHeading, v.rot.rotation.y); v.prevHeading = v.rot.rotation.y;
       v.turnRate = (v.turnRate ?? 0) + (dh / Math.max(dt, 1e-3) - (v.turnRate ?? 0)) * Math.min(1, dt * 8);
       if (m > 0 && v.steedId !== mid) {
-        if (v.steed) { v.rot.remove(v.steed.group); if (v.steed instanceof Steed) v.steed.dispose(); }
-        v.steed = mid === "broom" ? new Broom() : new Steed(mid); v.steedId = mid; v.rot.add(v.steed.group);
+        if (v.steed) { v.rot.remove(v.steed.group); v.saddle?.dispose(); v.saddle = undefined; if (v.steed instanceof Steed || v.steed instanceof Dragon) v.steed.dispose(); }
+        v.steed = mid === "broom" ? new Broom() : mid === "dragon" ? new Dragon(DRAGON_MOUNT_SCALE, { shadow: true }) : new Steed(mid); v.steedId = mid; v.rot.add(v.steed.group);
+        if (v.steed instanceof Dragon) { v.saddle = new DragonSaddle(v.steed); wireDragon(v.steed, () => v === views.get(myId) ? "own" : "other"); }
       }
-      let seatY = 0;
+      let seatY = 0, seatX = 0, seatZ = 0, tiltX = 0, tiltZ = 0;
       if (v.steed) {
         const b = v.steed.group; b.visible = m > 0;
         if (m > 0 && v.steed instanceof Broom) {
@@ -995,6 +1055,29 @@ function frame() {
             b.position.set(0, 0.42 + k * 1.2, k * k * 4);
             b.rotation.x = -k * 0.6; b.scale.setScalar(Math.max(0.01, m));
           }
+        } else if (m > 0 && v.steed instanceof Dragon) {
+          // dragón: al montar baja en picado desde el cielo (con rugido y polvo al posarse) y el jinete salta a la silla;
+          // al desmontar el jinete salta y el dragón remonta el vuelo hasta perderse de vista
+          const d = v.steed, sd = v.saddle, K = DRAGON_MOUNT_SCALE, sm = (x: number) => { x = Math.max(0, Math.min(1, x)); return x * x * (3 - 2 * x); };
+          if (fly) { v.dAlt = v.alt; if (mPrev === 0) d.roar(); } else if (v.dAlt === undefined) v.dAlt = v.alt;
+          const hopK = sm((m - 0.7) / 0.3); // 0 el jinete en el suelo · 1 sentado en la silla
+          // con el dragón, la altura mínima de vuelo (FLY.minY) es estar posado: se dibuja en el suelo, y mientras llega
+          // el jinete se queda de pie (antes flotaba a 1,4 m esperando al dragón)
+          const lift = Math.max(0, v.alt - FLY.minY);
+          if (fly) v.rot.position.y = lift * hopK;
+          let oy = 0, oz = 0, pitch = 0, sc = 1;
+          if (fly && m < 0.7) { const u = 1 - m / 0.7; oy = u * u * 34; oz = -u * u * 22; pitch = u * 0.8; }
+          else if (!fly) { const u = 1 - m; oy = Math.max(0, v.dAlt - v.alt) + u * u * 40 + u * 2; oz = u * u * 30; pitch = -u * 0.7; sc = sm(m / 0.2); }
+          if (fly && mPrev < 0.7 && m >= 0.7) { const p = v.group.position; fx.ring(p.x, p.z, 5.5, 0xbfae8c, 0.7); fx.ring(p.x, p.z, 3.2, 0xefe6d0, 0.5, 0.14, 0.08); }
+          const diving = fly && m < 0.7, leaving = !fly;
+          d.update(dt, { speed: diving ? 14 : leaving ? 10 : speed, climb: leaving ? 9 : fly ? vy : 0, turn: v.turnRate, grounded: fly && m >= 0.7 && lift < 0.4 && speed < 1 });
+          sd?.update(dt, t, speed);
+          b.scale.setScalar(Math.max(0.01, sc) * K); b.position.set(0, oy, oz - (sd?.seatZ ?? d.seatZ)); b.rotation.set(pitch, 0, 0); b.updateMatrix();
+          // el jinete sigue al lomo: sube y baja con el aleteo, se ladea y cabecea con el dragón
+          const p = fv3.set(0, (sd?.seat ?? d.seat) / K, (sd?.seatZ ?? d.seatZ) / K).applyMatrix4(d.body.matrix).applyMatrix4(b.matrix);
+          const hop = Math.sin(Math.PI * hopK) * 0.7;
+          tiltZ = d.body.rotation.z * hopK; tiltX = (pitch * 0.7 + Math.sin(d.body.position.y * 6) * 0.02) * hopK;
+          seatX = p.x * hopK; seatZ = p.z * hopK; seatY = (p.y - 0.42) * hopK + hop;
         } else if (m > 0 && v.steed instanceof Steed) {
           v.steed.update(dt, fly ? speed : 0, v.turnRate);
           const q = m - 1, e = fly ? 1 + 2.70158 * q * q * q + 1.70158 * q * q : m; // crece con un pequeño rebote
@@ -1003,13 +1086,13 @@ function frame() {
         }
       }
       v.seatY = seatY;
-      v.player.group.position.y = seatY;
+      v.player.group.position.set(seatX, seatY, seatZ); v.player.group.rotation.set(tiltX, 0, tiltZ);
       if (v === me) mountSound.update(dt, fly && m > 0.9 ? mid : undefined, speed, v.jumpT < 0 && (air || v.alt < 0.3));
       // saltito al montar y vaivén suave mientras flota (escoba)
-      if (air) v.rot.position.y += (fly ? Math.sin(Math.PI * m) * 0.5 : 0) + Math.sin(t * 2.1 + v.state.id) * 0.05 * m;
+      if (air && !dragonMount) v.rot.position.y += (fly ? Math.sin(Math.PI * m) * 0.5 : 0) + Math.sin(t * 2.1 + v.state.id) * 0.05 * m;
       const h = v.rot.position.y; // la sombra de contacto encoge con la altura
-      v.player.blob.visible = h < 14 && seatY < 0.05; v.player.blob.scale.setScalar(1 / (1 + h * 0.35));
-      v.player.setRiding(fly);
+      v.player.blob.visible = h < 14 && seatY < 0.05 && !(v.sw && v.sw > 0.02); v.player.blob.scale.setScalar(1 / (1 + h * 0.35));
+      v.player.setRiding(fly && (!dragonMount || m > 0.72));
       v.player.setAirborne(!fly && v.alt > 0.3);
       const flyAir = fly && air;
       const dive = flyAir ? Math.max(-0.65, Math.min(0.65, -Math.atan2(vy, Math.max(speed, 4)))) : 0;
@@ -1017,6 +1100,22 @@ function frame() {
       v.bank = (v.bank ?? 0) + ((flyAir ? Math.max(-0.4, Math.min(0.4, -turn * 1.2)) : 0) - (v.bank ?? 0)) * Math.min(1, dt * 5);
       v.rot.rotation.order = "YXZ"; // giro, luego cabeceo y alabeo en los ejes del propio personaje
       v.rot.rotation.x = v.lean; v.rot.rotation.z = v.bank;
+    }
+    if (v.dragon) {
+      // vuela bajo sobre su guarida: sube y baja con el aleteo y se posa al morir
+      const want = v.state.dead ? 0 : BOSS_HOVER + Math.sin(t * 0.8 + v.state.id) * 0.4;
+      v.alt += (want - v.alt) * Math.min(1, dt * (v.state.dead ? 2.5 : 1.5));
+      v.rot.position.y = v.alt;
+      // mira al jugador vivo más cercano (el tuyo si estás a tiro)
+      let tgt: View | undefined, best = 45;
+      if (!v.state.dead) for (const o of views.values()) if (o.player && !o.state.dead) {
+        const dd = Math.hypot(o.group.position.x - v.group.position.x, o.group.position.z - v.group.position.z) - (o === me ? 6 : 0);
+        if (dd < best) { best = dd; tgt = o; }
+      }
+      v.dragon.lookAt(tgt ? dragonLook.set(tgt.group.position.x, tgt.group.position.y + tgt.alt + 1.5, tgt.group.position.z) : null);
+      v.dragon.update(dt, { speed, turn: turn / Math.max(dt, 1e-3) * 0.02, dead: v.state.dead });
+      v.bars.position.y = BOSS_BARS_Y + v.alt; if (v.label) v.label.position.y = BOSS_BARS_Y + 0.9 + v.alt;
+      if (v.state.dead) { v.deadFor += dt; if (v.deadFor > 14) v.group.visible = false; }
     }
     if (v.wolf) {
       v.wolf.update(dt, speed);
@@ -1033,7 +1132,7 @@ function frame() {
     // aturdido: tres estrellas girando sobre la cabeza
     if (v.state.stun && !v.state.dead) {
       if (!v.stars) { v.stars = new THREE.Group(); for (let k = 0; k < 3; k++) { const s = new THREE.Mesh(starGeo, starMat); s.position.set(Math.cos(k * 2.09) * 0.38, 0, Math.sin(k * 2.09) * 0.38); v.stars.add(s); } v.group.add(v.stars); }
-      v.stars.visible = true; v.stars.position.y = (v.wolf ? 1.55 : 2.25) + v.alt; v.stars.rotation.y = t * 4;
+      v.stars.visible = true; v.stars.position.y = (v.wolf ? v.wolf.height - 0.35 : 2.25) + v.alt; v.stars.rotation.y = t * 4;
     } else if (v.stars) v.stars.visible = false;
     // barra sobre la cabeza: el tramo perdido se vacía con retraso; las de criaturas sanas solo si las señalas
     const ratio = v.state.dead ? 0 : v.state.hp / v.state.maxHp;
@@ -1050,14 +1149,17 @@ function frame() {
   const wantFov = 55 + (flying && !still ? 12 * Math.min(1, mySpeed / (PLAYER.speed * myMount().speedMult)) : 0);
   if (Math.abs(camera.fov - wantFov) > 0.05) { camera.fov += (wantFov - camera.fov) * Math.min(1, dt * 3); camera.updateProjectionMatrix(); }
   let yaw = cam.yaw, pitch = cam.pitch, dist = cam.dist;
-  if (me && joined) camTarget.set(me.group.position.x, 1.7 + me.alt + (me.rot.position.y - me.alt) * 0.6 + (me.seatY ?? 0), me.group.position.z);
+  const onDragon = !!me && me.steed instanceof Dragon, dk = onDragon ? me!.mount ?? 0 : 0; // el dragón es grande: la cámara se aleja y sube un poco
+  if (me && joined) camTarget.set(me.group.position.x, 1.7 - (me.sw ?? 0) * 1.05 + me.alt + (me.rot.position.y - me.alt) * 0.6 + (me.seatY ?? 0), me.group.position.z);
   else { camTarget.set(0, 4, 0); yaw = t * 0.06; pitch = 0.42; dist = 52; }
+  if (dk > 0) { dist *= 1 + 0.65 * dk; camTarget.y += 0.7 * dk; }
   if (me && joined) dist = camRoomDist = roomCamDist(camTarget, yaw, pitch, dist, camRoomDist, dt);
   const cp = Math.cos(pitch);
   camera.position.set(camTarget.x - Math.sin(yaw) * cp * dist, Math.max(0.6, camTarget.y + Math.sin(pitch) * dist), camTarget.z - Math.cos(yaw) * cp * dist);
   camera.lookAt(camTarget);
+  dragonSound.listener(camera.position.x, camera.position.y, camera.position.z, yaw);
 
-  fx.update(dt); skillBar.update(now); updateBlessedAuras(dt, t);
+  fx.update(dt); swimFx.update(dt); skillBar.update(now); updateBlessedAuras(dt, t);
   const activeQuest = joined && invState?.quest ? questOf(invState.quest) : undefined;
   // marcas sobre los NPCs: "!" hay algo que hacer aquí, "?" dorado entregar, "?" gris en curso
   const npcMarks: Record<string, NpcMark> = {};
@@ -1089,23 +1191,23 @@ function frame() {
     npcs.setHover(hn);
     hoverId = hn ? undefined : pick(hoverAt[0], hoverAt[1]); hoverAt = null;
     const hv = hoverId !== undefined ? views.get(hoverId) : undefined;
-    canvas.style.cursor = hn ? TALK_CURSOR : hv ? (hv.state.kind === "mob" ? SWORD : "pointer") : "";
+    canvas.style.cursor = hn ? TALK_CURSOR : hv ? (isFoe(hv.state.kind) ? SWORD : "pointer") : "";
   }
   const tv = targetId !== null ? views.get(targetId) : undefined;
   if (targetId !== null && (!tv || (tv.state.dead && (targetGone += dt) > 2))) setTarget(null, false, !!tv);
   const showRing = (m: THREE.Mesh, v: View | undefined) => {
     m.visible = !!v && v.group.visible && !v.state.dead;
-    if (v && m.visible) { m.position.set(v.group.position.x, 0.12 + v.alt, v.group.position.z); m.scale.setScalar(v.wolf ? 1.35 : 0.85); }
+    if (v && m.visible) { m.position.set(v.group.position.x, 0.12 + v.alt, v.group.position.z); m.scale.setScalar(v.dragon ? 5 : v.wolf ? v.wolf.ring : 0.85); }
   };
   showRing(selRing, tv);
   showRing(hovRing, hoverId !== targetId && hoverId !== undefined ? views.get(hoverId) : undefined);
   if (tv) {
-    (selRing.material as THREE.MeshBasicMaterial).color.setHex(tv.wolf ? FOE : 0x6fb4ff);
+    (selRing.material as THREE.MeshBasicMaterial).color.setHex(tv.wolf || tv.dragon ? FOE : 0x6fb4ff);
     selRing.rotation.y += dt * (attacking ? 2.4 : 0.8);
     (selRing.material as THREE.MeshBasicMaterial).opacity = attacking ? 0.75 + Math.sin(t * 10) * 0.25 : 0.9;
   }
   if (me && tv) targetFrame.update({
-    state: tv.state, distance: Math.hypot(tv.tx - me.group.position.x, tv.tz - me.group.position.z), attacking, hostile: tv.state.kind === "mob",
+    state: tv.state, distance: Math.hypot(tv.tx - me.group.position.x, tv.tz - me.group.position.z), attacking, hostile: isFoe(tv.state.kind),
     safe: inSafeZone(me.group.position.x, me.group.position.z) || inSafeZone(tv.tx, tv.tz),
   }, dt);
   else targetFrame.update(null, dt);

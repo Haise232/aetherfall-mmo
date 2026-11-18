@@ -2,9 +2,9 @@
 # Para ver la dirección actual: deploy/direccion.sh
 [Unit]
 Description=Valdoria: túnel de Cloudflare
+# Independiente del juego: reiniciar el juego (deploy/actualizar.sh) no reinicia el túnel, así la dirección no cambia.
 After=valdoria.service network-online.target
 Wants=network-online.target
-Requires=valdoria.service
 
 [Service]
 Type=simple

@@ -123,6 +123,22 @@ Luego abre `http://localhost:8787`.
 - Protocolo: `changeClass` y `job`.
 - UI: selector de clase reutilizable (`createCreator` en modo `changeClass`) y diálogo del gremio.
 
+### Jefe dragón y montura de dragón
+- Modelo `public/models/Dragon.glb` ("Dragon Rigged" de na3ee1, **CC-BY 3.0**: mantener el crédito en `CREDITOS.md` y el README). Trae esqueleto pero no animaciones: `models/dragon.ts` (`Dragon`) anima por código girando huesos sobre ejes del modelo (alas `ShoulderL/R`, `ForearmL/R`, cola `Tail001..007`, cuello `Spine007/009`, `Jaw001`; GLTFLoader quita los puntos de los nombres) y dibuja el aliento de fuego. `createLair` dibuja la guarida (`DRAGON_LAIR` en `world.ts`, sin árboles ni lobos alrededor).
+- Servidor: evento del mundo `dragon` (panel → Eventos) → `syncDragon` crea una entidad `kind: "boss"` con las cifras de `DRAGON` (`sim.ts`). IA en `stepDragon` (persigue sin alejarse de la guarida; sin nadie vuelve y se cura), mordisco normal y `breath` en cono (evento `breath`). Al morir (`dragonSlain`): experiencia a quien luchó y la montura `dragon` a quien hizo al menos `minShare` del daño; el cadáver se va a los `despawnSec` y el evento termina.
+- `Dragon` monta el modelo en su pose de enlace (`skeleton.pose()`: el GLB trae el ala derecha doblada). Materiales procedurales con `onBeforeCompile` (escamas, membrana, ojos emisivos), aliento en `models/dragonFx.ts` (`FireFx`: inspira 0,4 s y escupe 1,2 s). API: `ready`, `bone()`, `roar()`, `flinch()`, `lookAt()`, `busy` y callbacks `onWingbeat`/`onBreath`/`onRoar`.
+- Montura: silla y arreos en `models/dragonSaddle.ts` (se ajusta al lomo con un rayo), sonido sintetizado en `world/dragonSound.ts` (alas, rugido, fuego; con `renderTest`). La guarida sale en el minimapa (`ui/minimap.ts`).
+- Monturas ganadas: `Ent.mounts`/`mountSel` (columna `mounts`, JSON `{have, sel}`), en `InvState.mounts`/`mount` y `EntityState.mount`. Usa siempre `mountFor(e)` en el servidor y `mountIdOf(state)` en el cliente (no `mountOf(look)` a secas). Mensaje `pickMount` (selector en el inventario).
+
+### Enemigos por niveles
+- Catálogo en `packages/shared/src/mobs.ts` (`MOBS`, `mobOf`, `MOB_SPAWN_POINTS`): lobo 1, jabalí 3, araña 5, bandido 7, esqueleto 9, trol 12, cada uno con sus cifras, botín, experiencia y zona. Las zonas (`MOB_ZONES` en `world.ts`) son claros sin árboles para que se vea el combate. Solo se desuellan los que tienen `skin`.
+- Servidor: `spawnMob`, y en `step` las cifras salen de `mobOf(e.mob)`; `reward(p, id)` usa el botín y la experiencia del tipo y `progressKill(p, id)`. El snapshot lleva `mob`.
+- Cliente: `models/mobs/` (registro `createMobModel` en `index.ts`, contrato `MobModel` en `types.ts`). Animales en `animals.ts` (lobo y araña: modelos CC0 de Quaternius en `public/models/mobs/`; jabalí procedural en `quadruped.ts`). Humanoides en `humanoids.ts` (bandido = KayKit Rogue_Hooded repintado; esqueleto = KayKit Skeletons, CC0; trol = rig del Barbarian deformado en `troll.ts`; carga común en `rig.ts`). Créditos en `public/models/mobs/CREDITOS-*.md`.
+
+### Lago y nado
+- `SWIM`, `inWater(x, z)` y `PIER` en `world.ts`: el lago ya no es colisionador; dentro se nada (55 % de velocidad, sin atacar, habilidades, saltar, recolectar, sentarse ni montar en monturas de tierra; la escoba y el dragón vuelan por encima). Los enemigos no entran al agua ni eligen a un nadador. Snapshot: `swim`.
+- Cliente: agua con shader propio, orilla, juncos, nenúfares y peces en `world/lake.ts`; salpicaduras, ondas y chapoteo en `world/swimFx.ts`; animación de nado procedural en `Character.setSwimming` (`models/character.ts`).
+
 ### Despliegue (PC propio + Cloudflare Tunnel)
 - Producción: `npm run build` y `npm start`. El servidor (`apps/server/src/http.ts`) sirve `apps/client/dist` (comprimido con gzip al arrancar) y acepta el WebSocket en `/ws` (o `/`) del mismo puerto. `/salud` responde `ok`.
 - `main.ts`: límites `MAX_CONN`/`MAX_PER_IP` (IP real de `CF-Connecting-IP` si llega del propio equipo), ping cada 30 s, copia `VACUUM INTO` al arrancar y cada día en `data/backups` (últimas `BACKUP_KEEP`), y apagado limpio con SIGTERM (guarda a todos y cierra con código 1012; el cliente espera a `/salud` y recarga solo).

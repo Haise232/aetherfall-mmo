@@ -231,6 +231,12 @@ body:has(#login.open, #create.open) :is(#info, #minimap, #me, #chat, #panel, #ta
 #panel .slot span { display: flex; flex-direction: column; min-width: 0; } #panel .slot small { font-size: 11px; color: var(--cal-d); }
 #panel .slot b { font-size: 14px; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } #panel .slot em { font-style: normal; font-size: 12px; color: var(--oro); }
 #panel button.slot:hover small, #panel button.slot:hover em { color: var(--pizarra); }
+#panel .mounts { margin: 8px 14px 0; } #panel .mounts small { color: var(--cal-d); font-size: 13px; font-weight: 700; }
+#panel .mounts div { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+#panel .mounts button { cursor: pointer; border: 0; border-radius: 0; padding: 5px 9px; font: 700 13px var(--text); background: var(--pizarra-d); color: var(--cal); outline: 3px solid transparent; outline-offset: 2px; }
+#panel .mounts button em { font-style: normal; font-weight: 500; color: var(--cal-d); }
+#panel .mounts button[aria-pressed="true"] { background: var(--oro); color: var(--pizarra); } #panel .mounts button[aria-pressed="true"] em { color: var(--pizarra); }
+#panel .mounts button:focus-visible { outline-color: var(--oro); }
 #panel .job { margin: 10px 14px 0; padding: 7px 10px 8px; background: var(--pizarra-d); border-left: 3px solid var(--c); }
 #panel .job .jt { display: flex; justify-content: space-between; align-items: baseline; } #panel .job .jt b { font: 600 20px/1 var(--display); } #panel .job .jt span { font-size: 13px; color: var(--cal-d); }
 #panel .job .bar i { background: var(--c); }

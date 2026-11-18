@@ -9,6 +9,7 @@ import { RY, cathedral, gatehouse, guildBanners, house, onFace, tower, type Ctx 
 import { castle, goddessFountain } from "./castle";
 import type { SkyLights } from "./sky";
 import { stall } from "./stalls";
+import { createLake, type Lake, type LakeSplash } from "./lake";
 import {
   DOOR, Merge, STONE, STONE_D, STONE_L, TIMBER, WARM, WOOD, archGeo, bannerGeo, hash2, pennantGeo, noiseTexture, rng, setWindowGlow, std, textSprite,
 } from "./kit";
@@ -36,6 +37,9 @@ export interface Lobby {
   ground: THREE.Mesh;
   /** Luces que mueve el ciclo de día y noche. */
   lights: SkyLights;
+  /** El lago: ondas de quien nada y cota del agua. `onSplash`: quien dibuja las gotas (los peces que saltan las usan). */
+  lake: Lake;
+  onSplash(s: LakeSplash): void;
   /** `lightDir`: dirección hacia el sol (o la luna) que da las sombras. */
   update(dt: number, t: number, focus: THREE.Vector3, lightDir?: THREE.Vector3): void;
 }
@@ -447,38 +451,9 @@ export function buildLobby(scene: THREE.Scene): Lobby {
     blades.forEach(g => { for (const mesh of src) { const c = new THREE.Mesh(mesh.geometry, mesh.material); c.castShadow = true; c.matrixAutoUpdate = false; g.add(c); } });
   }
 
-  // --- Lago: orilla, agua con degradado, destellos, juncos y nenúfares ---
-  const shore = flat(new THREE.RingGeometry(LAKE.r - 2, LAKE.r + 4.5, 64, 2), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 }), 0.025); shore.position.set(LAKE.x, 0.025, LAKE.z);
-  {
-    const p = shore.geometry.attributes.position!, cols = new Float32Array(p.count * 3), a = new THREE.Color(0x4b4a36), b = new THREE.Color(0xb5a373), c = new THREE.Color(0x7a8a4c), tt = new THREE.Color();
-    for (let i = 0; i < p.count; i++) {
-      const rad = Math.hypot(p.getX(i), p.getY(i));
-      if (rad < LAKE.r) tt.copy(a); else if (rad < LAKE.r + 2) tt.copy(b); else tt.copy(c).lerp(b, 0.15);
-      cols[i * 3] = tt.r; cols[i * 3 + 1] = tt.g; cols[i * 3 + 2] = tt.b;
-    }
-    shore.geometry.setAttribute("color", new THREE.BufferAttribute(cols, 3));
-  }
-  const lakeGeo = new THREE.CircleGeometry(LAKE.r, 64, 0, Math.PI * 2);
-  {
-    const p = lakeGeo.attributes.position!, cols = new Float32Array(p.count * 3), deep = new THREE.Color(0x1d5f96), edge = new THREE.Color(0x4aa8cf), tt = new THREE.Color();
-    for (let i = 0; i < p.count; i++) { tt.copy(deep).lerp(edge, THREE.MathUtils.smoothstep(Math.hypot(p.getX(i), p.getY(i)) / LAKE.r, 0.35, 1.0)); cols[i * 3] = tt.r; cols[i * 3 + 1] = tt.g; cols[i * 3 + 2] = tt.b; }
-    lakeGeo.setAttribute("color", new THREE.BufferAttribute(cols, 3));
-  }
-  const lake = flat(lakeGeo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.1, metalness: 0.2, transparent: true, opacity: 0.92 }), 0.06); lake.receiveShadow = false; lake.position.set(LAKE.x, 0.06, LAKE.z);
-  const glints = new THREE.InstancedMesh(new THREE.PlaneGeometry(1.4, 0.16).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xdff4ff, transparent: true, opacity: 0.55, depthWrite: false }), 40);
-  const glintPos = Array.from({ length: 40 }, (_, i) => { const a = hash2(i, 3) * 6.28, rr = Math.sqrt(hash2(i, 9)) * (LAKE.r - 3); return { x: LAKE.x + Math.cos(a) * rr, z: LAKE.z + Math.sin(a) * rr, ph: hash2(i, 5) * 6.28 }; });
-  glints.frustumCulled = false; root.add(glints);
-  const updateGlints = (t: number) => {
-    glintPos.forEach((g, i) => { const k = Math.max(0, Math.sin(t * 1.4 + g.ph)); dummy.position.set(g.x, 0.085, g.z); dummy.rotation.set(0, g.ph, 0); dummy.scale.set(0.3 + k, 1, 1); dummy.updateMatrix(); glints.setMatrixAt(i, dummy.matrix); });
-    dummy.scale.set(1, 1, 1); glints.instanceMatrix.needsUpdate = true;
-  };
-  updateGlints(0);
-  const reeds = Array.from({ length: 110 }, (_, i) => { const a = hash2(i, 21) * 6.28, rr = LAKE.r + 0.2 + hash2(i, 22) * 2.4; return { x: LAKE.x + Math.cos(a) * rr, z: LAKE.z + Math.sin(a) * rr, s: 0.8 + hash2(i, 23) * 0.9, ry: hash2(i, 24) * 6, color: new THREE.Color().setHSL(0.22 + hash2(i, 25) * 0.06, 0.45, 0.3 + hash2(i, 26) * 0.12).getHex() }; })
-    .filter(p => !(p.x > pierX0 - 14 && p.x < pierX0 + 3 && Math.abs(p.z - pierZ) < 3));
-  chunked(colorParts([[new THREE.ConeGeometry(0.05, 1.5, 3), 0xffffff, 0, 0.75, 0], [new THREE.ConeGeometry(0.05, 1.2, 3), 0xffffff, 0.15, 0.6, 0.05], [new THREE.CylinderGeometry(0.07, 0.07, 0.5, 5), 0x6a4a2c, 0.05, 1.5, 0.0]]), leaf, reeds, 100);
-  const pads = new THREE.InstancedMesh(new THREE.CircleGeometry(0.6, 8).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x3f8a3a, roughness: 0.9 }), 30);
-  for (let i = 0; i < 30; i++) { const a = hash2(i, 31) * 6.28, rr = Math.sqrt(hash2(i, 32)) * (LAKE.r - 3); dummy.position.set(LAKE.x + Math.cos(a) * rr, 0.075, LAKE.z + Math.sin(a) * rr); dummy.rotation.set(0, hash2(i, 33) * 6, 0); dummy.scale.setScalar(0.7 + hash2(i, 34)); dummy.updateMatrix(); pads.setMatrixAt(i, dummy.matrix); }
-  dummy.scale.set(1, 1, 1); pads.computeBoundingSphere(); root.add(pads);
+  // --- Lago: agua con shader, orilla, juncos, nenúfares y peces (ver lake.ts) ---
+  let splashSink: LakeSplash | undefined;
+  const lake = createLake(root, scene, sun, hemi, () => splashSink);
   const boats: THREE.Group[] = [];
   for (let i = 0; i < 3; i++) {
     const g = new THREE.Group(), a = 1 + i * 2.1, rr = 8 + i * 5; g.position.set(LAKE.x + Math.cos(a) * rr, 0.1, LAKE.z + Math.sin(a) * rr); g.rotation.y = a * 2;
@@ -513,7 +488,7 @@ export function buildLobby(scene: THREE.Scene): Lobby {
   };
   const TEXEL = (SH * 2) / sun.shadow.mapSize.x;
   return {
-    ground, lights,
+    ground, lights, lake, onSplash(s) { splashSink = s; },
     update(dt, t, focus, lightDir) {
       goddess.update(t);
       if (lightDir && lightDir.distanceToSquared(lDir) > 1e-6) { // el sol se mueve: rehace los ejes del plano de la luz
@@ -526,12 +501,9 @@ export function buildLobby(scene: THREE.Scene): Lobby {
       sun.target.position.copy(snap); sun.position.copy(snap).add(SUN_OFFSET);
       fountain.update(t);
       STALLS.forEach((s, i) => { stallLabels[i]!.visible = (s.x - focus.x) ** 2 + (s.z - focus.z) ** 2 < 26 * 26; });
-      lake.position.y = 0.06 + Math.sin(t * 1.1) * 0.012;
       for (const b of blades) b.rotation.z = t * 0.5;
       boats.forEach((b, i) => { b.position.y = 0.1 + Math.sin(t * 1.3 + i * 2) * 0.05; b.rotation.z = Math.sin(t * 1.1 + i) * 0.03; });
-      if (Math.abs(focus.x - LAKE.x) < 90 && Math.abs(focus.z - LAKE.z) < 90) {
-        updateGlints(t);
-      }
+      lake.update(dt, t, focus, lightDir);
       for (const p of puffs) {
         if (Math.abs(p.base.x - focus.x) > 70 || Math.abs(p.base.z - focus.z) > 70) { p.m.visible = false; continue; }
         const k = (p.ph + t * 0.18) % 1; p.m.visible = true;

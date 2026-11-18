@@ -3,7 +3,7 @@
 // pantalla es la dirección mundo (-1,-1) y el norte (castillo, -z) queda marcado con una "N" en el borde.
 import {
   AVENUE_W, BUILDINGS, CASTLE, CASTLE_RECT, CASTLE_TOWERS, CITY_NAME, CITY_R, FIELDS, FOUNTAIN, GATE_ANGLES, GATE_NAMES,
-  GATE_TOWERS, GREAT_HALL, LAKE, PLAZA_R, ROAD_W, ROCKS, STALLS, TREES, WALL_SEGMENTS, WALL_TOWERS, WINDMILLS, WORLD_HALF,
+  GATE_TOWERS, GREAT_HALL, DRAGON_LAIR, LAKE, PLAZA_R, ROAD_W, ROCKS, STALLS, TREES, WALL_SEGMENTS, WALL_TOWERS, WINDMILLS, WORLD_HALF,
   inSafeZone,
 } from "@mmorpg/shared";
 
@@ -47,6 +47,10 @@ function prerender(): HTMLCanvasElement {
   lg.addColorStop(0, "#2a6a9c"); lg.addColorStop(0.85, "#3b82b4"); lg.addColorStop(1, "#8aa86a");
   g.fillStyle = lg; g.beginPath(); g.arc(LAKE.x, LAKE.z, LAKE.r + 3, 0, 7); g.fill();
   g.strokeStyle = "#233f2a"; g.lineWidth = 0.8; g.beginPath(); g.arc(LAKE.x, LAKE.z, LAKE.r + 3, 0, 7); g.stroke();
+  // Guarida del dragón: claro de tierra quemada con corro de rocas y brasas
+  g.fillStyle = "#3a3229"; g.beginPath(); g.arc(DRAGON_LAIR.x, DRAGON_LAIR.z, DRAGON_LAIR.r, 0, 7); g.fill();
+  g.fillStyle = "#24201c"; g.beginPath(); g.arc(DRAGON_LAIR.x, DRAGON_LAIR.z, DRAGON_LAIR.r * 0.55, 0, 7); g.fill();
+  g.strokeStyle = "#b8452a"; g.lineWidth = 1.2; g.setLineDash([3, 2.5]); g.beginPath(); g.arc(DRAGON_LAIR.x, DRAGON_LAIR.z, DRAGON_LAIR.r, 0, 7); g.stroke(); g.setLineDash([]);
   // Árboles y rocas
   g.fillStyle = "#2d4b27";
   for (const t of TREES) { g.beginPath(); g.arc(t.x, t.z, 1.5 * t.s, 0, 7); g.fill(); }
@@ -111,12 +115,13 @@ function prerender(): HTMLCanvasElement {
   return c;
 }
 
-interface Label { text: string; x: number; z: number; big?: boolean; dy?: number }
+interface Label { text: string; x: number; z: number; big?: boolean; dy?: number; lair?: boolean }
 const SHORT: Record<string, string> = { cathedral: "Catedral", guild: "Gremio", market: "Mercado", tavern: "Taberna", forge: "Herrería", bank: "Banco" };
 const LABELS: Label[] = [
   ...GATE_ANGLES.map((a, i) => ({ text: GATE_NAMES[i]!, x: Math.cos(a) * CITY_R, z: Math.sin(a) * CITY_R })),
   { text: "Castillo", x: 0, z: -66, big: true },
   { text: "Lago", x: LAKE.x, z: LAKE.z },
+  { text: "Guarida del dragón", x: DRAGON_LAIR.x, z: DRAGON_LAIR.z, dy: 0, lair: true },
 ];
 const BIG_LABELS: Label[] = [
   ...LABELS,
@@ -195,14 +200,14 @@ export function createMinimap() {
     const sy = (x: number, zz: number) => R + z * ((x - mx) + (zz - mz)) * SQ;
     for (const l of LABELS) {
       const x = sx(l.x, l.z), y = sy(l.x, l.z);
-      if (Math.hypot(x - R, y - R) < R - 8) drawLabel(g, l.text, x, y - (l.big ? 0 : 9), l.big ? 11 : 9.5, l.big ? "#ffe9a0" : "#fff6dc");
+      if (Math.hypot(x - R, y - R) < R - 8) drawLabel(g, l.text, x, y - (l.big ? 0 : 9), l.big ? 11 : 9.5, l.big ? "#ffe9a0" : l.lair ? "#ff9c6b" : "#fff6dc");
     }
     for (const v of views) {
       if (v === meView || v.state.dead) continue;
       const x = sx(v.group.position.x, v.group.position.z), y = sy(v.group.position.x, v.group.position.z);
       if (Math.hypot(x - R, y - R) > R - 4) continue;
-      const wolf = v.state.kind === "mob";
-      g.beginPath(); g.arc(x, y, wolf ? 3 : 3.4, 0, 7);
+      const wolf = v.state.kind === "mob" || v.state.kind === "boss", big = v.state.kind === "boss";
+      g.beginPath(); g.arc(x, y, big ? 5.5 : wolf ? 3 : 3.4, 0, 7);
       g.fillStyle = wolf ? "#e53935" : "#f4e7a8"; g.fill(); g.lineWidth = 1.2; g.strokeStyle = "rgba(0,0,0,.85)"; g.stroke();
     }
     for (const n of nodes) { const x = sx(n.x, n.z), y = sy(n.x, n.z); if (Math.hypot(x - R, y - R) < R - 6) nodeMark(g, x, y, 3.2); }
@@ -225,11 +230,11 @@ export function createMinimap() {
     gb.imageSmoothingEnabled = true;
     gb.drawImage(off, 0, 0, W, W);
     const px = (x: number) => (x + WORLD_HALF + PAD) * k, pz = (zz: number) => (zz + WORLD_HALF + PAD) * k;
-    for (const l of BIG_LABELS) drawLabel(gb, l.text, px(l.x), pz(l.z) + (l.dy ?? 0) * d - (LABELS.includes(l) && !l.big ? 11 * d : 0), (l.big ? 15 : 11.5) * d, l.big ? "#ffe9a0" : "#fff6dc");
+    for (const l of BIG_LABELS) drawLabel(gb, l.text, px(l.x), pz(l.z) + (l.dy ?? 0) * d - (LABELS.includes(l) && !l.big ? 11 * d : 0), (l.big ? 15 : 11.5) * d, l.big ? "#ffe9a0" : l.lair ? "#ff9c6b" : "#fff6dc");
     for (const v of views) {
       if (v === meView || v.state.dead) continue;
-      const wolf = v.state.kind === "mob";
-      gb.beginPath(); gb.arc(px(v.group.position.x), pz(v.group.position.z), (wolf ? 3.2 : 4) * d, 0, 7);
+      const wolf = v.state.kind === "mob" || v.state.kind === "boss";
+      gb.beginPath(); gb.arc(px(v.group.position.x), pz(v.group.position.z), (v.state.kind === "boss" ? 7 : wolf ? 3.2 : 4) * d, 0, 7);
       gb.fillStyle = wolf ? "#e53935" : "#f4e7a8"; gb.fill(); gb.lineWidth = 1.3 * d; gb.strokeStyle = "rgba(0,0,0,.85)"; gb.stroke();
     }
     for (const n of nodes) nodeMark(gb, px(n.x), pz(n.z), 4 * d);

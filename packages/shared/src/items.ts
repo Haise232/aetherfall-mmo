@@ -1,3 +1,4 @@
+import type { MountId } from "./classes";
 import { classRankMult, type SkillState } from "./progression";
 // Datos de juego: ítems, loot y progresión. Datos, no lógica dispersa.
 export type Slot = "weapon" | "armor";
@@ -41,6 +42,18 @@ export const ITEMS: Record<string, ItemDef> = {
   wild_berries: { id: "wild_berries", name: "Bayas silvestres", tier: 1, cat: "herb", basePrice: 3 },
   moonflower: { id: "moonflower", name: "Flor de luna", tier: 3, cat: "herb", basePrice: 35 },
   thick_hide: { id: "thick_hide", name: "Cuero grueso", tier: 2, cat: "hide", basePrice: 18 },
+  // trofeos de los enemigos de fuera (ver mobs.ts)
+  boar_tusk: { id: "boar_tusk", name: "Colmillo de jabalí", tier: 1, cat: "trophy", basePrice: 12 },
+  spider_silk: { id: "spider_silk", name: "Seda de araña", tier: 2, cat: "trophy", basePrice: 14 },
+  venom_sac: { id: "venom_sac", name: "Saco de veneno", tier: 2, cat: "trophy", basePrice: 22 },
+  bandit_badge: { id: "bandit_badge", name: "Insignia de bandido", tier: 3, cat: "trophy", basePrice: 26 },
+  ancient_bone: { id: "ancient_bone", name: "Hueso antiguo", tier: 3, cat: "trophy", basePrice: 30 },
+  stone_heart: { id: "stone_heart", name: "Corazón de piedra", tier: 4, cat: "trophy", basePrice: 55 },
+  // equipo mejor, de los enemigos de nivel alto
+  steel_sword: { id: "steel_sword", name: "Espada de acero", tier: 3, slot: "weapon", damage: 11, cat: "weapon" },
+  war_axe: { id: "war_axe", name: "Hacha de guerra", tier: 4, slot: "weapon", damage: 15, cat: "weapon" },
+  chainmail: { id: "chainmail", name: "Cota de malla", tier: 3, slot: "armor", defense: 6, cat: "armor" },
+  plate_armor: { id: "plate_armor", name: "Armadura de placas", tier: 4, slot: "armor", defense: 9, cat: "armor" },
 };
 
 // ---- Rarezas de los recursos ----
@@ -96,6 +109,8 @@ export interface InvState {
   coins?: number;
   /** Habilidades: rango de cada una aprendida, opción elegida en cada casilla, y puntos sin gastar. */
   skills?: SkillState; skillPoints?: number;
+  /** Monturas ganadas (además de la de la clase) y la elegida (null: la de la clase). */
+  mounts?: MountId[]; mount?: MountId | null;
 }
 
 export interface Stats { maxHp: number; damage: number; defense: number }

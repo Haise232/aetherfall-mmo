@@ -58,7 +58,7 @@ export function createMountSound() {
      */
     update(dt: number, mount: MountId | undefined, speed: number, grounded: boolean) {
       if (!ctx) return;
-      if (mount === "broom") { setWind(Math.min(1, speed / 16)); return; }
+      if (mount === "broom" || mount === "dragon") { setWind(Math.min(1, speed / (mount === "dragon" ? 20 : 16))); return; }
       setWind(0);
       if (!mount || !grounded || speed < 0.6) { beat = 0; return; }
       // marcha: paso (4 tiempos lentos), trote (2) o galope (3 golpes seguidos y un silencio)

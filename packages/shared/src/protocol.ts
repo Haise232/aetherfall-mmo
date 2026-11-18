@@ -1,7 +1,8 @@
 // Protocolo v2 (JSON). El cliente envía intenciones, nunca estado.
 import type { InvState, Slot } from "./items";
-import type { BuffId, LookSel } from "./classes";
+import type { BuffId, LookSel, MountId } from "./classes";
 import type { GatherKind } from "./gather";
+import type { MobId } from "./mobs";
 import type { Pose } from "./parks";
 
 export const TICK_HZ = 20;
@@ -16,11 +17,12 @@ export const MAX_CHARS = 3;
 export type AuthError = "invalid" | "weak" | "exists" | "wrong" | "locked" | "expired" | "pending" | "banned";
 
 // ---- Eventos del mundo (los activa un administrador) ----
-export type WorldEventId = "xp2" | "gather2" | "wolfmoon";
+export type WorldEventId = "xp2" | "gather2" | "wolfmoon" | "dragon";
 export const WORLD_EVENTS: Record<WorldEventId, { name: string; desc: string }> = {
   xp2: { name: "Doble experiencia", desc: "Toda la experiencia (combate, misiones y oficios) vale el doble." },
   gather2: { name: "Doble recolección", desc: "Cada faena de oficio da el doble de recursos." },
   wolfmoon: { name: "Luna de lobos", desc: "Salen el doble de lobos fuera de la muralla y huelen a los viajeros desde más lejos." },
+  dragon: { name: "Ataque del dragón", desc: "Vermithrax despierta en su guarida, al noroeste fuera de la muralla. Quien ayude a derrotarlo lo gana como montura voladora." },
 };
 export interface ActiveEvent { id: WorldEventId; until: number } // until: fecha (ms) en que termina
 /** Cuenta vista desde el panel de administración. */
@@ -47,6 +49,7 @@ export type ClientMsg =
   | { t: "create"; cls: string; style: number; tone: number } // tras "needLook": elegir clase y aspecto
   | { t: "moveTo"; x: number; z: number } // intención: ir hacia un punto (cancela el objetivo)
   | { t: "input"; dx: number; dz: number; ry: number; dy?: number } // dy: subir/bajar (-1..1) cuando vuela
+  | { t: "pickMount"; id: MountId | null } // elegir montura ganada (null: la de la clase)
   | { t: "mount"; on: boolean } // subirse o bajarse de la montura (escoba, caballo, cabra...) // WASD: dirección en el mundo (|d|<=1) y hacia dónde mira
   | { t: "jump" }
   | { t: "attack"; target: number } // intención: perseguir y atacar a una entidad
@@ -72,7 +75,7 @@ export type ClientMsg =
   | { t: "equip"; item: string }
   | { t: "unequip"; slot: Slot };
 
-export type EntityKind = "player" | "mob";
+export type EntityKind = "player" | "mob" | "boss";
 
 // ---- Casa de subastas ----
 export type OrderSide = "buy" | "sell";
@@ -109,7 +112,10 @@ export interface EntityState {
   stun?: boolean; // aturdido: no se mueve ni ataca
   act?: GatherKind; // recolectando (pesca, mina, hierbas o desuello)
   skinned?: true; // lobo abatido ya desollado
+  swim?: true; // nadando en el lago
   pose?: Pose; // sentado en un banco, en el suelo o tumbado
+  mount?: MountId; // montura elegida si no es la de su clase (p. ej. el dragón)
+  mob?: MobId; // tipo de criatura (solo kind "mob")
 }
 
 export type GameEvent =
@@ -126,6 +132,7 @@ export type GameEvent =
   | { e: "note"; to: number; text: string } // aviso privado (p. ej. "este banco de peces está agotado")
   | { e: "emote"; id: number; anim: string; text?: string } // gesto (/saludar...); text: "saluda" para el chat
   | { e: "announce"; text: string } // aviso de un administrador para todos
+  | { e: "breath"; id: number; ry: number } // el dragón escupe fuego hacia ry
   | { e: "gathered"; id: number; kind: GatherKind; rare?: true; rarity?: number } // terminó una faena (rarity: la mejor obtenida)
   | { e: "sold"; to: number; item: string; qty: number; gross: number; net: number } // una orden de venta tuya se ha ejecutado (net: tras impuesto)
   | { e: "bought"; to: number; item: string; qty: number; price: number }; // una orden de compra tuya se ha ejecutado (recógelo en la subasta)

@@ -1,6 +1,6 @@
 // Inventario: ficha del personaje, equipo, oficio con su herramienta y mochila en cuadrícula con pestañas.
 // Mismo lenguaje heráldico plano que el resto de la interfaz (tokens de hud.css).
-import { GATHER_TOOL, ITEMS, RARITIES, fmtCoins, PLAYER, classOf, gatherOfJob, jobOf, playerStats, type InvState, type ItemCat, type ItemDef, type LookSel, type Slot } from "@mmorpg/shared";
+import { GATHER_TOOL, ITEMS, MOUNTS, mountOf, type MountId, RARITIES, fmtCoins, PLAYER, classOf, gatherOfJob, jobOf, playerStats, type InvState, type ItemCat, type ItemDef, type LookSel, type Slot } from "@mmorpg/shared";
 
 const hex = (n: number) => "#" + n.toString(16).padStart(6, "0");
 /** Color del borde de una casilla: la rareza manda (si la tiene); si no, el tier. */
@@ -44,7 +44,7 @@ function describe(d: ItemDef) {
   return lines.join("<br>");
 }
 
-export function createInventory(el: HTMLElement, onEquip: (item: string) => void, onUnequip: (slot: Slot) => void) {
+export function createInventory(el: HTMLElement, onEquip: (item: string) => void, onUnequip: (slot: Slot) => void, onMount: (id: MountId | null) => void = () => {}) {
   let tab: Tab = "all";
   try { tab = (localStorage.getItem("inv-tab") as Tab) || "all"; } catch { /* sin almacenamiento */ }
   let last: { inv: InvState; name: string; look?: LookSel; maxHp: number } | null = null;
@@ -55,7 +55,8 @@ export function createInventory(el: HTMLElement, onEquip: (item: string) => void
     if (tb) { tab = tb.dataset.tab as Tab; try { localStorage.setItem("inv-tab", tab); } catch { /* */ } if (last) api.render(last.inv, last.name, last.look, last.maxHp); return; }
     if (t.closest(".x")) { api.toggle(false); return; }
     const it = t.closest<HTMLElement>("[data-eq]"); if (it) { onEquip(it.dataset.eq!); return; }
-    const un = t.closest<HTMLElement>("[data-un]"); if (un) onUnequip(un.dataset.un as Slot);
+    const un = t.closest<HTMLElement>("[data-un]"); if (un) { onUnequip(un.dataset.un as Slot); return; }
+    const mo = t.closest<HTMLElement>("[data-mount]"); if (mo) onMount(mo.dataset.mount ? mo.dataset.mount as MountId : null);
   });
   // detalle del objeto bajo el ratón
   el.addEventListener("pointerover", ev => {
@@ -108,6 +109,10 @@ export function createInventory(el: HTMLElement, onEquip: (item: string) => void
             <p class="${hasTool ? "ok" : "bad"}">${tool ? (hasTool ? `${icon(ITEMS[tool], 18)} ${ITEMS[tool]!.name}` : `Te falta la herramienta (${ITEMS[tool]?.name}): habla con el maestro del gremio.`) : ""}</p>`
             : `<div class="jt"><b>Sin oficio</b></div><p class="bad">Habla con el maestro del gremio para aprender uno.</p>`}
         </section>
+        ${inv.mounts?.length ? `<section class="mounts"><small>Montura (<kbd>R</kbd>)</small><div>${[null, ...inv.mounts].map(m => {
+          const id = m ?? mountOf(look), on = (inv.mount ?? null) === m;
+          return `<button data-mount="${m ?? ""}" aria-pressed="${on}">${MOUNTS[id].name}${m ? "" : " <em>de tu clase</em>"}${MOUNTS[id].flies ? " · vuela" : ""}</button>`;
+        }).join("")}</div></section>` : ""}
         <nav class="tabs" role="tablist">${TABS.map(([t, l]) => `<button role="tab" data-tab="${t}" aria-selected="${t === tab}">${l}</button>`).join("")}</nav>
         ${empty}<div class="grid">${cells.join("")}${tab === "all" ? '<span class="cell void"></span>'.repeat(free) : ""}</div>
         <p class="detail"><span class="muted">Pasa el ratón por un objeto para ver qué es.</span></p>
